@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key}
+      - ALOHA_URL=${ALOHA_URL}
+      - ALOHA_USERNAME=${ALOHA_USERNAME}
+      - ALOHA_PASSWORD=${ALOHA_PASSWORD}
+      - NETCHEX_URL=${NETCHEX_URL}
+      - NETCHEX_USERNAME=${NETCHEX_USERNAME}
+      - NETCHEX_PASSWORD=${NETCHEX_PASSWORD}
+      - SCRAPE_SCHEDULE=${SCRAPE_SCHEDULE:-30 1 * * *}
+      - ENABLE_SCRAPING=true
+    volumes:
+      - db-data:/app/backend/database
+    restart: unless-stopped
+
+volumes:
+  db-data:

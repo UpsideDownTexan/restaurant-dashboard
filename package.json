@@ -1,0 +1,19 @@
+{
+  "name": "restaurant-dashboard",
+  "version": "1.0.0",
+  "description": "Restaurant reporting dashboard mimicking MarginEdge/Restaurant365 - tracks Prime Cost, Labor, and Sales metrics",
+  "private": true,
+  "scripts": {
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
+    "build": "cd frontend && npm run build",
+    "start": "cd backend && npm start",
+    "db:init": "cd backend && npm run db:init",
+    "scrape": "cd backend && npm run scrape:all",
+    "docker:build": "docker build -t restaurant-dashboard .",
+    "docker:run": "docker run -p 3001:3001 --env-file .env restaurant-dashboard"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-800;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-slate-200 p-6;
+  }
+
+  .card-header {
+    @apply text-sm font-medium text-slate-500 uppercase tracking-wide mb-2;
+  }
+
+  .kpi-value {
+    @apply text-3xl font-bold text-slate-900;
+  }
+
+  .kpi-change {
+    @apply text-sm font-medium;
+  }
+
+  .kpi-change.positive {
+    @apply text-green-600;
+  }
+
+  .kpi-change.negative {
+    @apply text-red-600;
+  }
+
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-700;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-100 text-slate-700 hover:bg-slate-200;
+  }
+
+  .period-selector button {
+    @apply px-3 py-1.5 text-sm rounded-md transition-colors;
+  }
+
+  .period-selector button.active {
+    @apply bg-brand-600 text-white;
+  }
+
+  .period-selector button:not(.active) {
+    @apply text-slate-600 hover:bg-slate-100;
+  }
+
+  .table-header {
+    @apply text-xs font-semibold text-slate-500 uppercase tracking-wider;
+  }
+
+  .restaurant-row {
+    @apply hover:bg-slate-50 transition-colors cursor-pointer;
+  }
+
+  .sidebar-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors;
+  }
+
+  .sidebar-link.active {
+    @apply bg-brand-50 text-brand-700 font-medium;
+  }
+
+  .metric-bar {
+    @apply h-2 rounded-full bg-slate-200 overflow-hidden;
+  }
+
+  .metric-bar-fill {
+    @apply h-full rounded-full transition-all duration-500;
+  }
+
+  .tooltip {
+    @apply absolute z-50 px-3 py-2 text-sm bg-slate-900 text-white rounded-lg shadow-lg;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400;
+}
+
+/* Chart styles */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #e2e8f0;
+}
+
+.recharts-text {
+  fill: #64748b;
+  font-size: 12px;
+}
