@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer';
-import { format, subDays } from 'date-fns';
+import { format, subDays, startOfWeek, endOfWeek } from 'date-fns';
 import { DailyLabor } from '../models/DailyLabor.js';
 import { Restaurant } from '../models/Restaurant.js';
 import { getDb } from '../database/db.js';
@@ -7,251 +7,239 @@ import { getDb } from '../database/db.js';
 /**
  * NetChex Payroll Scraper
  *
- * NOTE: This is a template scraper. You will need to customize the selectors
- * and navigation flow based on your actual NetChex interface.
- * The exact selectors will depend on your NetChex configuration.
+ * Updated with correct selectors for NetChex Azure B2C authentication.
+ * Login Portal: https://na3.netchexonline.net/n/login#/
+ * Uses two-step authentication (username then password)
+ * 
+ * Company name format: "CAM - COMPANY NAME"
+ * Example: "CAM - MARIANOS RESTAURANT ARLINGTON INC"
  */
 export class NetchexScraper {
-    constructor() {
-        this.browser = null;
-        this.page = null;
-        this.baseUrl = process.env.NETCHEX_URL || 'https://www.netchexonline.com';
-        this.username = process.env.NETCHEX_USERNAME;
-        this.password = process.env.NETCHEX_PASSWORD;
-    }
+        constructor() {
+                    this.browser = null;
+                    this.page = null;
+                    this.baseUrl = process.env.NETCHEX_URL || 'https://netchexonline.com';
+                    this.loginPortalUrl = 'https://na3.netchexonline.net/n/login#/';
+                    this.username = process.env.NETCHEX_USERNAME;
+                    this.password = process.env.NETCHEX_PASSWORD;
+        }
 
     async init() {
-        this.browser = await puppeteer.launch({
-            headless: 'new',
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu'
-            ]
-        });
-        this.page = await this.browser.newPage();
-        await this.page.setViewport({ width: 1920, height: 1080 });
-        this.page.setDefaultTimeout(30000);
+                this.browser = await puppeteer.launch({
+                                headless: 'new',
+                                args: [
+                                                    '--no-sandbox',
+                                                    '--disable-setuid-sandbox',
+                                                    '--disable-dev-shm-usage',
+                                                    '--disable-gpu'
+                                                ]
+                });
+                this.page = await this.browser.newPage();
+                await this.page.setViewport({ width: 1920, height: 1080 });
+                this.page.setDefaultTimeout(30000);
     }
 
     async close() {
-        if (this.browser) {
-            await this.browser.close();
-        }
+                if (this.browser) {
+                                await this.browser.close();
+                }
     }
 
     async login() {
-        console.log('🔐 Logging into NetChex...');
+                console.log('Logging into NetChex...');
 
-        await this.page.goto(this.baseUrl, { waitUntil: 'networkidle2' });
+            // Navigate to login portal
+            await this.page.goto(this.loginPortalUrl, { waitUntil: 'networkidle2' });
 
-        // Wait for login form
-        // NOTE: Update these selectors based on your actual NetChex login page
-        await this.page.waitForSelector('input[name="username"], input[type="email"], #username, #txtUserName');
+            // Step 1: Enter username
+            await this.page.waitForSelector('input[type="text"], input[type="email"]');
+                await this.page.type('input[type="text"], input[type="email"]', this.username);
 
-        // Enter credentials
-        await this.page.type('input[name="username"], #txtUserName, #username', this.username);
-        await this.page.type('input[name="password"], #txtPassword, #password', this.password);
+            // Click continue/next button
+            await this.page.click('button[type="submit"]');
 
-        // Click login button
-        await this.page.click('button[type="submit"], input[type="submit"], #btnLogin, .login-button');
+            // Wait for password page (Azure B2C redirect)
+            await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
 
-        // Wait for navigation
-        await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+            // Step 2: Enter password
+            await this.page.waitForSelector('input[type="password"]', { timeout: 10000 });
+                await this.page.type('input[type="password"]', this.password);
 
-        console.log('✅ Logged into NetChex');
+            // Click sign in button
+            await this.page.click('button[type="submit"]');
+
+            // Wait for main app to load
+            await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+
+            console.log('Logged into NetChex');
     }
 
-    async navigateToLaborReports() {
-        console.log('📊 Navigating to labor reports...');
+    async navigateToLaborReport() {
+                console.log('Navigating to Labor Distribution Summary...');
 
-        // NOTE: Update navigation based on your NetChex menu structure
-        // Common navigation patterns:
+            const reportUrl = 'https://na3.netchexonline.net/n/Reports/Report/LaborDistributionSummary';
+                await this.page.goto(reportUrl, { waitUntil: 'networkidle2' });
 
-        // Look for Reports menu
-        await this.page.waitForSelector('[data-menu="reports"], .reports-menu, #reportsLink, a[href*="reports"]');
-        await this.page.click('[data-menu="reports"], .reports-menu, #reportsLink, a[href*="reports"]');
+            // Wait for report page to load
+            await this.page.waitForSelector('form, .report-container, [class*="report"]', { timeout: 15000 });
 
-        await this.page.waitForTimeout(2000);
-
-        // Navigate to labor/time reports
-        const laborReportLink = await this.page.$('a[href*="labor"], a[href*="time"], .labor-reports-link');
-        if (laborReportLink) {
-            await laborReportLink.click();
-            await this.page.waitForTimeout(2000);
-        }
+            console.log('Report page loaded');
     }
 
-    async selectDateRange(date) {
-        console.log(`📅 Selecting date: ${date}`);
+    async selectCompany(companyName) {
+                console.log('Selecting company: ' + companyName);
 
-        // NOTE: Update date picker selectors based on your NetChex interface
-        const dateInput = await this.page.$('input[type="date"], #reportDate, .date-picker, #txtDate');
-        if (dateInput) {
-            await dateInput.click({ clickCount: 3 });
-            await dateInput.type(date);
-        }
+            // Look for company dropdown
+            const companySelect = await this.page.$('select[name="company"], select#company, [class*="company-select"]');
+                if (companySelect) {
+                                await this.page.select('select[name="company"], select#company', companyName);
+                                await this.page.waitForTimeout(1000);
+                }
     }
 
-    async selectLocation(locationId) {
-        console.log(`🏪 Selecting location: ${locationId}`);
+    async setDateRange(startDate, endDate) {
+                console.log('Setting date range: ' + startDate + ' to ' + endDate);
 
-        // NOTE: Update location selector based on your NetChex interface
-        const locationDropdown = await this.page.$('select#location, select[name="location"], .location-selector, #ddlLocation');
-        if (locationDropdown) {
-            await this.page.select('select#location, select[name="location"], .location-selector, #ddlLocation', locationId);
-        }
+            // Find date inputs
+            const startInput = await this.page.$('input[name="startDate"], input#startDate, input[placeholder*="Start"]');
+                const endInput = await this.page.$('input[name="endDate"], input#endDate, input[placeholder*="End"]');
+
+            if (startInput && endInput) {
+                            await startInput.click({ clickCount: 3 });
+                            await startInput.type(startDate);
+                            await endInput.click({ clickCount: 3 });
+                            await endInput.type(endDate);
+            }
     }
 
     async runReport() {
-        // Click run/generate report button
-        const runButton = await this.page.$('button#runReport, .run-report-btn, input[value="Run"], #btnRunReport');
-        if (runButton) {
-            await runButton.click();
-            await this.page.waitForTimeout(5000); // Wait for report to generate
-        }
+                console.log('Running report...');
+
+            // Click run/generate report button
+            const runButton = await this.page.$('button[type="submit"], button:has-text("Run"), button:has-text("Generate")');
+                if (runButton) {
+                                await runButton.click();
+                                await this.page.waitForTimeout(3000);
+                }
     }
 
-    async extractLaborReport() {
-        console.log('👷 Extracting labor data...');
+    async extractLaborData() {
+                console.log('Extracting labor data...');
 
-        // NOTE: These selectors are examples - customize based on your report layout
-        const laborData = await this.page.evaluate(() => {
-            const getText = (selector) => {
-                const el = document.querySelector(selector);
-                return el ? parseFloat(el.textContent.replace(/[$,]/g, '')) || 0 : 0;
-            };
+            const data = await this.page.evaluate(() => {
+                            const result = {
+                                                total_hours: 0,
+                                                total_wages: 0,
+                                                regular_hours: 0,
+                                                overtime_hours: 0
+                            };
 
-            const getHours = (selector) => {
-                const el = document.querySelector(selector);
-                if (!el) return 0;
-                const text = el.textContent;
-                // Handle HH:MM format
-                if (text.includes(':')) {
-                    const [hours, mins] = text.split(':').map(Number);
-                    return hours + (mins / 60);
-                }
-                return parseFloat(text) || 0;
-            };
+                                                              // Look for summary table or totals
+                                                              const tables = document.querySelectorAll('table');
+                            for (const table of tables) {
+                                                const rows = table.querySelectorAll('tr');
+                                                for (const row of rows) {
+                                                                        const cells = row.querySelectorAll('td');
+                                                                        const text = row.textContent.toLowerCase();
 
-            return {
-                // Update these selectors based on your actual NetChex report structure
-                total_hours: getHours('.total-hours, [data-field="totalHours"], #totalHours'),
-                regular_hours: getHours('.regular-hours, [data-field="regularHours"], #regHours'),
-                overtime_hours: getHours('.overtime-hours, [data-field="overtimeHours"], #otHours'),
+                                                    if (text.includes('total') || text.includes('hours') || text.includes('wages')) {
+                                                                                cells.forEach((cell, i) => {
+                                                                                                                const value = parseFloat(cell.textContent.replace(/[$,]/g, ''));
+                                                                                                                if (!isNaN(value)) {
+                                                                                                                                                    if (text.includes('regular') && text.includes('hour')) {
+                                                                                                                                                                                            result.regular_hours = value;
+                                                                                                                                                        } else if (text.includes('overtime') || text.includes('ot')) {
+                                                                                                                                                                                            result.overtime_hours = value;
+                                                                                                                                                        } else if (text.includes('total') && text.includes('hour')) {
+                                                                                                                                                                                            result.total_hours = value;
+                                                                                                                                                        } else if (text.includes('wage') || text.includes('pay')) {
+                                                                                                                                                                                            result.total_wages = value;
+                                                                                                                                                        }
+                                                                                                                    }
+                                                                                    });
+                                                    }
+                                                }
+                            }
 
-                total_labor_cost: getText('.total-wages, [data-field="totalWages"], #totalWages'),
-                regular_wages: getText('.regular-wages, [data-field="regularWages"], #regWages'),
-                overtime_wages: getText('.overtime-wages, [data-field="overtimeWages"], #otWages'),
+                                                              return result;
+            });
 
-                // Department breakdowns (if available)
-                foh_hours: getHours('.foh-hours, [data-dept="FOH"] .hours'),
-                foh_cost: getText('.foh-cost, [data-dept="FOH"] .wages'),
-                boh_hours: getHours('.boh-hours, [data-dept="BOH"] .hours'),
-                boh_cost: getText('.boh-cost, [data-dept="BOH"] .wages'),
-                management_hours: getHours('.mgmt-hours, [data-dept="MGT"] .hours'),
-                management_cost: getText('.mgmt-cost, [data-dept="MGT"] .wages'),
-
-                // Benefits/taxes (if shown)
-                payroll_taxes: getText('.payroll-taxes, [data-field="taxes"], #taxes'),
-
-                // Employee count
-                employee_count: parseInt(document.querySelector('.employee-count, [data-field="empCount"]')?.textContent) || 0
-            };
-        });
-
-        // Calculate loaded labor cost (labor + estimated burden)
-        // Industry standard is ~20-25% burden on top of wages
-        const burdenRate = 0.22;
-        laborData.total_labor_burden = laborData.total_labor_cost * (1 + burdenRate);
-        laborData.benefits_cost = laborData.total_labor_cost * burdenRate - (laborData.payroll_taxes || 0);
-
-        return laborData;
+            return data;
     }
 
     async scrapeForDate(targetDate = null) {
-        const date = targetDate || format(subDays(new Date(), 1), 'yyyy-MM-dd');
-        const results = [];
-        const restaurants = Restaurant.getAll();
+                const date = targetDate || format(subDays(new Date(), 1), 'yyyy-MM-dd');
+                const results = [];
+                const restaurants = Restaurant.getAll();
 
-        try {
-            await this.init();
-            await this.login();
-            await this.navigateToLaborReports();
+            try {
+                            await this.init();
+                            await this.login();
+                            await this.navigateToLaborReport();
 
-            for (const restaurant of restaurants) {
-                if (!restaurant.netchex_location_id) {
-                    console.log(`⚠️ Skipping ${restaurant.name} - no NetChex location ID configured`);
-                    continue;
-                }
+                    for (const restaurant of restaurants) {
+                                        if (!restaurant.netchex_company_name) {
+                                                                console.log('Skipping ' + restaurant.name + ' - no NetChex company configured');
+                                                                continue;
+                                        }
 
-                console.log(`\n📍 Processing: ${restaurant.name}`);
+                                console.log('Processing: ' + restaurant.name);
 
-                try {
-                    await this.selectLocation(restaurant.netchex_location_id);
-                    await this.selectDateRange(date);
-                    await this.runReport();
+                                try {
+                                                        await this.selectCompany(restaurant.netchex_company_name);
+                                                        await this.setDateRange(date, date);
+                                                        await this.runReport();
 
-                    // Wait for report to load
-                    await this.page.waitForTimeout(3000);
+                                            const laborData = await this.extractLaborData();
 
-                    const laborData = await this.extractLaborReport();
+                                            DailyLabor.upsert({
+                                                                        restaurant_id: restaurant.id,
+                                                                        business_date: date,
+                                                                        ...laborData,
+                                                                        data_source: 'netchex'
+                                            });
 
-                    // Save to database
-                    DailyLabor.upsert({
-                        restaurant_id: restaurant.id,
-                        business_date: date,
-                        ...laborData,
-                        data_source: 'netchex'
-                    });
+                                            results.push({
+                                                                        restaurant: restaurant.name,
+                                                                        date,
+                                                                        status: 'success',
+                                                                        data: laborData
+                                            });
 
-                    results.push({
-                        restaurant: restaurant.name,
-                        date,
-                        status: 'success',
-                        data: laborData
-                    });
+                                            console.log(restaurant.name + ': Total Hours ' + laborData.total_hours);
 
-                    console.log(`✅ ${restaurant.name}: Labor $${laborData.total_labor_cost.toFixed(2)} (${laborData.total_hours.toFixed(1)} hrs)`);
+                                } catch (storeError) {
+                                                        console.error('Error processing ' + restaurant.name + ':', storeError.message);
+                                                        results.push({
+                                                                                    restaurant: restaurant.name,
+                                                                                    date,
+                                                                                    status: 'error',
+                                                                                    error: storeError.message
+                                                        });
+                                }
+                    }
 
-                } catch (storeError) {
-                    console.error(`❌ Error processing ${restaurant.name}:`, storeError.message);
-                    results.push({
-                        restaurant: restaurant.name,
-                        date,
-                        status: 'error',
-                        error: storeError.message
-                    });
-                }
+                    this.logScrape('netchex', date, results);
+
+            } finally {
+                            await this.close();
             }
 
-            // Log the scrape
-            this.logScrape('netchex', date, results);
-
-        } finally {
-            await this.close();
-        }
-
-        return results;
+            return results;
     }
 
     logScrape(type, date, results) {
-        const db = getDb();
-        const successful = results.filter(r => r.status === 'success').length;
-        const failed = results.filter(r => r.status === 'error').length;
+                const db = getDb();
+                const successful = results.filter(r => r.status === 'success').length;
+                const failed = results.filter(r => r.status === 'error').length;
 
-        db.prepare(`
-            INSERT INTO scrape_log (
-                scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds
-            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
-        `).run(
-            type,
-            date,
-            failed > 0 ? 'partial' : 'success',
-            successful,
-            failed > 0 ? `${failed} locations failed` : null
-        );
+            db.prepare('INSERT INTO scrape_log (scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)').run(
+                            type,
+                            date,
+                            failed > 0 ? 'partial' : 'success',
+                            successful,
+                            failed > 0 ? failed + ' stores failed' : null
+                        );
     }
 }
 
