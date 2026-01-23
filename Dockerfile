@@ -14,34 +14,35 @@ WORKDIR /app
 
 # Install production dependencies for backend
 COPY backend/package*.json ./backend/
-RUN npm ci --omit=devRUN npm ci --only=production
+WORKDIR /app/backend
+RUN npm ci --omit=dev
 
 # Install puppeteer dependencies
 RUN apk add --no-cache \
     chromium \
-    nss \
-    freetype \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont
+        nss \
+            freetype \
+                harfbuzz \
+                    ca-certificates \
+                        ttf-freefont
 
-# Set puppeteer to use installed chromium
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+                        # Set puppeteer to use installed chromium
+                        ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+                        ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Copy backend source
-COPY backend/ ./
+                        # Copy backend source
+                        COPY backend/ ./
 
-# Copy built frontend
-COPY --from=frontend-builder /app/frontend/dist ./dist/frontend
+                        # Copy built frontend
+                        COPY --from=frontend-builder /app/frontend/dist ./dist/frontend
 
-# Create database directory
-RUN mkdir -p /app/backend/database
+                        # Create database directory
+                        RUN mkdir -p /app/backend/database
 
-# Set environment variables
-ENV NODE_ENV=production
-ENV PORT=3001
+                        # Set environment variables
+                        ENV NODE_ENV=production
+                        ENV PORT=3001
 
-EXPOSE 3001
+                        EXPOSE 3001
 
-CMD ["node", "src/index.js"]
+                        CMD ["node", "src/index.js"]
