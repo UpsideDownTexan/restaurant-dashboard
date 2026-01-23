@@ -23,6 +23,11 @@ const PORT = process.env.PORT || 3001;
 
 // Basic Authentication Middleware
 const basicAuth = (req, res, next) => {
+              // Skip auth for health check endpoint (needed for Railway healthchecks)
+              if (req.path === '/api/health') {
+                              return next();
+              }
+            
             const authHeader = req.headers.authorization;
             if (!authHeader || !authHeader.startsWith('Basic ')) {
                             res.setHeader('WWW-Authenticate', 'Basic realm="Restaurant Dashboard"');
