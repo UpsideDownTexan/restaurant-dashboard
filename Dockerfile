@@ -14,8 +14,7 @@ WORKDIR /app
 
 # Install production dependencies for backend
 COPY backend/package*.json ./backend/
-WORKDIR /app/backend
-RUN npm ci --only=production
+RUN npm ci --omit=devRUN npm ci --only=production
 
 # Install puppeteer dependencies
 RUN apk add --no-cache \
