@@ -190,26 +190,25 @@ export class DailySales {
                 pw.guests as prior_guests,
                 ROUND((cw.sales - pw.sales) / NULLIF(pw.sales, 0) * 100, 2) as sales_change_pct,
                 ROUND((cw.guests - pw.guests) / NULLIF(pw.guests, 0) * 100, 2) as guests_change_pct
-            FROM current_week cw, prior_week pw
+          FROM current_week cw, prior_week pw
         `).get(...params, ...params);
     }
 
         // Get same day prior year comparison for YoY analysis
         static getPriorYearComparison(date, restaurantId = null) {
                     const db = getDb();
-                    const priorYearDate = new Date(date);
-                    priorYearDate.setFullYear(priorYearDate.getFullYear() - 1);
-                    // Adjust to same day of week
-                    const dayDiff = new Date(date).getDay() - priorYearDate.getDay();
-                    priorYearDate.setDate(priorYearDate.getDate() + dayDiff);
+        // Go back 52 weeks (364 days) for same day of week, same week last year
+                    const currentDate = new Date(date);
+                    const priorYearDate = new Date(currentDate.getTime() - (52 * 7 * 24 * 60 * 60 * 1000));
                     const pyDateStr = priorYearDate.toISOString().split('T')[0];
-
+                    // Also get last week (7 days ago) for comparison
+                    const lastWeekDate = new Date(currentDate.getTime() - (7 * 24 * 60 * 60 * 1000));
+                    const lwDateStr = lastWeekDate.toISOString().split('T')[0];
                     let sql = `SELECT ds.*, r.short_name FROM daily_sales ds 
                                 JOIN restaurants r ON ds.restaurant_id = r.id 
-                                            WHERE ds.business_date IN (?, ?)`;
-                    const params = [date, pyDateStr];
-                    if (restaurantId) { sql += ' AND ds.restaurant_id = ?'; params.push(restaurantId); }
-                    return db.prepare(sql).all(...params);
+                        WHERE ds.business_date IN (?, ?, ?)';
+        const params = [date, pyDateStr, lwDateStr];
+                if (restaurantId) { sql += ' AND ds.restaurant_id = ?'; params.push(restaurantId); }return db.prepare(sql).all(...params);
         }
 
         // Get week-to-date with prior year comparison
