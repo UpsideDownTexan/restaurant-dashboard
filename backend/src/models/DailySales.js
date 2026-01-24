@@ -193,6 +193,49 @@ export class DailySales {
             FROM current_week cw, prior_week pw
         `).get(...params, ...params);
     }
+
+        // Get same day prior year comparison for YoY analysis
+        static getPriorYearComparison(date, restaurantId = null) {
+                    const db = getDb();
+                    const priorYearDate = new Date(date);
+                    priorYearDate.setFullYear(priorYearDate.getFullYear() - 1);
+                    // Adjust to same day of week
+                    const dayDiff = new Date(date).getDay() - priorYearDate.getDay();
+                    priorYearDate.setDate(priorYearDate.getDate() + dayDiff);
+                    const pyDateStr = priorYearDate.toISOString().split('T')[0];
+
+                    let sql = `SELECT ds.*, r.short_name FROM daily_sales ds 
+                                JOIN restaurants r ON ds.restaurant_id = r.id 
+                                            WHERE ds.business_date IN (?, ?)`;
+                    const params = [date, pyDateStr];
+                    if (restaurantId) { sql += ' AND ds.restaurant_id = ?'; params.push(restaurantId); }
+                    return db.prepare(sql).all(...params);
+        }
+
+        // Get week-to-date with prior year comparison
+        static getWTDWithPriorYear(restaurantId = null) {
+                    const db = getDb();
+                    const today = new Date();
+                    const dayOfWeek = today.getDay();
+                    const weekStart = new Date(today);
+                    weekStart.setDate(today.getDate() - dayOfWeek);
+
+                    let sql = `WITH current_wtd AS (
+                                SELECT restaurant_id, SUM(net_sales) as sales, SUM(guest_count) as guests
+                                            FROM daily_sales WHERE business_date >= ? AND business_date <= ?
+                                                        ${restaurantId ? 'AND restaurant_id = ?' : ''} GROUP BY restaurant_id
+                                                                ), prior_wtd AS (
+                                                                            SELECT restaurant_id, SUM(net_sales) as sales, SUM(guest_count) as guests
+                                                                                        FROM daily_sales WHERE business_date >= date(?, '-1 year') AND business_date <= date(?, '-1 year')
+                                                                                                    ${restaurantId ? 'AND restaurant_id = ?' : ''} GROUP BY restaurant_id
+                                                                                                            ) SELECT c.*, p.sales as py_sales, p.guests as py_guests FROM current_wtd c LEFT JOIN prior_wtd p ON c.restaurant_id = p.restaurant_id`;
+
+                    const params = [weekStart.toISOString().split('T')[0], today.toISOString().split('T')[0]];
+                    if (restaurantId) params.push(restaurantId);
+                    params.push(weekStart.toISOString().split('T')[0], today.toISOString().split('T')[0]);
+                    if (restaurantId) params.push(restaurantId);
+                    return db.prepare(sql).all(...params);
+        }
 }
 
 export default DailySales;
