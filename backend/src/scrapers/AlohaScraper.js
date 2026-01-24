@@ -180,6 +180,35 @@ export class AlohaScraper {
                                 failed > 0 ? failed + ' stores failed' : null
                             );
     }
+
+            // Scrape category sales from Aloha Drilldown Viewer
+            async scrapeCategorySales(storeId, date) {
+                            const url = `https://lahaciendaranch.alohaenterprise.com/insightdashboard/drilldownviewer.jsp?store=${storeId}`;
+                            try {
+                                                await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+                                                const data = await this.page.evaluate(() => {
+                                                                        const result = { food_sales: 0, liquor_sales: 0, beer_sales: 0, wine_sales: 0, gift_card_sales: 0, retail_sales: 0 };
+                                                                        document.querySelectorAll('tr').forEach(row => {
+                                                                                                    const cells = row.querySelectorAll('td');
+                                                                                                    if (cells.length >= 2) {
+                                                                                                                                    const label = cells[0].textContent.trim();
+                                                                                                                                    const val = parseFloat(cells[1].textContent.replace(/[$,]/g, '')) || 0;
+                                                                                                                                    if (label.includes('Food')) result.food_sales = val;
+                                                                                                                                    else if (label.includes('Liquor')) result.liquor_sales = val;
+                                                                                                                                    else if (label.includes('Beer')) result.beer_sales = val;
+                                                                                                                                    else if (label.includes('Wine')) result.wine_sales = val;
+                                                                                                                                    else if (label.includes('G.C.')) result.gift_card_sales = val;
+                                                                                                                                    else if (label.includes('Retail')) result.retail_sales = val;
+                                                                                                            }
+                                                                        });
+                                                                        return result;
+                                                });
+                                                return data;
+                            } catch (err) {
+                                                console.error('Category scrape error:', err.message);
+                                                return null;
+                            }
+            }
 }
 
 export default AlohaScraper;
