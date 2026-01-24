@@ -245,4 +245,35 @@ router.get('/restaurant/:id', (req, res) => {
     }
 });
 
+/**
+ * GET /api/dashboard/daily-comparison
+  * Get daily sales with prior year comparison
+   */
+router.get('/daily-comparison', (req, res) => {
+        try {
+                    const { date, restaurant_id } = req.query;
+                    const targetDate = date || format(new Date(), 'yyyy-MM-dd');
+                    const data = DailySales.getPriorYearComparison(targetDate, restaurant_id ? parseInt(restaurant_id) : null);
+                    res.json({ date: targetDate, data });
+        } catch (error) {
+                    console.error('Daily comparison error:', error);
+                    res.status(500).json({ error: 'Failed to fetch comparison data' });
+        }
+});
+
+/**
+ * GET /api/dashboard/wtd-comparison
+  * Get week-to-date sales with prior year comparison
+   */
+router.get('/wtd-comparison', (req, res) => {
+        try {
+                    const { restaurant_id } = req.query;
+                    const data = DailySales.getWTDWithPriorYear(restaurant_id ? parseInt(restaurant_id) : null);
+                    res.json(data);
+        } catch (error) {
+                    console.error('WTD comparison error:', error);
+                    res.status(500).json({ error: 'Failed to fetch WTD comparison data' });
+        }
+});
+
 export default router;
