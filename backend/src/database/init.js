@@ -48,8 +48,7 @@ async function init() {
                         short_name: "LHR-COL",
                         brand: "La Hacienda Ranch",
                         city: "Colleyville",
-                        aloha_store_id: null,
-                        netchex_company_name: null
+            aloha_store_id: "5250",                        netchex_company_name: null
         },
         {
                         name: "La Hacienda Ranch Frisco",
@@ -64,16 +63,14 @@ async function init() {
                         short_name: "LHR-PT",
                         brand: "La Hacienda Ranch",
                         city: "Dallas",
-                        aloha_store_id: null,
-                        netchex_company_name: null
+            aloha_store_id: "17390",                        netchex_company_name: null
         },
         {
                         name: "La Hacienda Ranch Skillman",
                         short_name: "LHR-SKL",
                         brand: "La Hacienda Ranch",
                         city: "Dallas",
-                        aloha_store_id: null,
-                        netchex_company_name: null
+            aloha_store_id: "6300",                        netchex_company_name: null
         },
             ];
 
