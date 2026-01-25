@@ -9,7 +9,7 @@ import SalesChart from '../components/charts/SalesChart';
 import { formatCurrency, formatPercent, formatNumber, formatDate } from '../utils/formatters';
 
 export default function Sales() {
-  const [period, setPeriod] = useState('7d');
+  const [period, setPeriod] = useState('today');
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
 
   const { data: salesData, isLoading } = useQuery({
