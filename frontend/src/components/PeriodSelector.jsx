@@ -1,14 +1,10 @@
 import React from 'react';
 
 const periods = [
-  { value: '1d', label: 'Today' },
-  { value: '7d', label: '7 Days' },
-  { value: '14d', label: '14 Days' },
-  { value: '30d', label: '30 Days' },
+  { value: 'today', label: 'Today' },
+  { value: 'wtd', label: 'WTD' },
   { value: 'mtd', label: 'MTD' },
-  { value: 'ytd', label: 'YTD' },
-];
-
+  ];
 export default function PeriodSelector({ value, onChange }) {
   return (
     <div className="period-selector flex bg-slate-100 rounded-lg p-1">
