@@ -13,12 +13,11 @@ import KPICard from '../components/KPICard';
 import PeriodSelector from '../components/PeriodSelector';
 import RestaurantSelector from '../components/RestaurantSelector';
 import SalesChart from '../components/charts/SalesChart';
-import PrimeCostChart from '../components/charts/PrimeCostChart';
 import RestaurantComparisonTable from '../components/RestaurantComparisonTable';
 import { formatCurrency, formatPercent, formatDate } from '../utils/formatters';
 
 export default function Dashboard() {
-  const [period, setPeriod] = useState('7d');
+  const [period, setPeriod] = useState('today')
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
 
   // Fetch dashboard data
@@ -32,10 +31,6 @@ export default function Dashboard() {
     queryFn: api.getRestaurants,
   });
 
-  const { data: primeCostData } = useQuery({
-    queryKey: ['prime-cost', period, selectedRestaurant],
-    queryFn: () => api.getPrimeCostData(period, selectedRestaurant),
-  });
 
   const { data: salesData } = useQuery({
     queryKey: ['sales', period, selectedRestaurant],
@@ -66,7 +61,7 @@ export default function Dashboard() {
   }
 
   const kpis = summary?.kpis || {};
-  const alerts = primeCostData?.alerts || [];
+  const alerts = [];
 
   return (
     <div className="space-y-6">
@@ -159,12 +154,7 @@ export default function Dashboard() {
 
         {/* Prime Cost Breakdown */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-slate-900 mb-4">Prime Cost Analysis</h3>
-          <PrimeCostChart data={primeCostData?.trend || []} height={280} />
-        </div>
-      </div>
-
-      {/* Restaurant Comparison */}
+          
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-slate-900">Location Performance</h3>
