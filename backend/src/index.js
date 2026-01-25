@@ -106,8 +106,8 @@ app.use((err, req, res, next) => {
             });
 });
 
-// Schedule automated scraping
-const SCRAPE_SCHEDULE = process.env.SCRAPE_SCHEDULE || '30 7 * * *';
+// Schedule automated 
+const SCRAPE_SCHEDULE = process.env.SCRAPE_SCHEDULE || '30 5 * * *';
 
 if (process.env.NODE_ENV === 'production' || process.env.ENABLE_SCRAPING === 'true') {
             cron.schedule(SCRAPE_SCHEDULE, async () => {
