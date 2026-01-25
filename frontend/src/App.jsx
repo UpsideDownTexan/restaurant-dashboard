@@ -4,8 +4,6 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Sales from './pages/Sales';
 import Labor from './pages/Labor';
-import PrimeCost from './pages/PrimeCost';
-import Locations from './pages/Locations';
 import LocationDetail from './pages/LocationDetail';
 import Settings from './pages/Settings';
 
@@ -17,8 +15,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/sales" element={<Sales />} />
           <Route path="/labor" element={<Labor />} />
-          <Route path="/prime-cost" element={<PrimeCost />} />
-          <Route path="/locations" element={<Locations />} />
+                    <Route path="/locations" element={<Locations />} />
           <Route path="/locations/:id" element={<LocationDetail />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
