@@ -17,7 +17,6 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Sales', href: '/sales', icon: DollarSign },
   { name: 'Labor', href: '/labor', icon: Users },
-  { name: 'Prime Cost', href: '/prime-cost', icon: PieChart },
   { name: 'Locations', href: '/locations', icon: Store },
 ];
 
