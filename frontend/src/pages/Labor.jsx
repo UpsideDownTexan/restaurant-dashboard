@@ -9,7 +9,7 @@ import LaborChart from '../components/charts/LaborChart';
 import { formatCurrency, formatPercent, formatHours, formatDate } from '../utils/formatters';
 
 export default function Labor() {
-  const [period, setPeriod] = useState('7d');
+  const [period, setPeriod] = useState('today');
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
 
   const { data: laborData, isLoading } = useQuery({
