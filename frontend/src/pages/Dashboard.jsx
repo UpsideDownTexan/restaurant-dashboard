@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   DollarSign,
   Users,
-  PieChart,
+  
   TrendingUp,
   AlertTriangle,
   RefreshCw
@@ -103,14 +103,6 @@ export default function Dashboard() {
           icon={DollarSign}
         />
         <KPICard
-          title="Prime Cost"
-          value={kpis.primeCost?.percent}
-          target={kpis.primeCost?.target || 65}
-          format="percent"
-          icon={PieChart}
-          inverse={true}
-        />
-        <KPICard
           title="Labor Cost"
           value={kpis.laborCost?.percent}
           target={kpis.laborCost?.target || 30}
@@ -144,27 +136,24 @@ export default function Dashboard() {
         </div>
       )}
 
+      
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Sales Trend */}
         <div className="card">
           <h3 className="text-lg font-semibold text-slate-900 mb-4">Sales Trend</h3>
-          <SalesChart data={salesData?.daily || []} height={280} />
-        </div>
-
-        {/* Prime Cost Breakdown */}
-        <div className="card">
+          <SalesChart data={salesData?.daily || []} height={280} />        </div>
           
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-slate-900">Location Performance</h3>
           <span className="text-sm text-slate-500">
-            Sorted by Prime Cost % (lowest to highest)
+            Sorted by sales (highest to lowest)
           </span>
         </div>
         <RestaurantComparisonTable
-          data={primeCostData?.byRestaurant || summary?.restaurants || []}
-          type="primeCost"
+          data={summary?.restaurants || []}
+          type="sales"
         />
       </div>
     </div>
