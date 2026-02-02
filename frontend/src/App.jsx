@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import Sales from './pages/Sale';
+import Sales from './pages/Sales';
 import Labor from './pages/Labor';
 import Locations from './pages/Locations';
 import LocationDetail from './pages/LocationDetail';
