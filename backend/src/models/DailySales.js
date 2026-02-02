@@ -206,7 +206,7 @@ export class DailySales {
                     const lwDateStr = lastWeekDate.toISOString().split('T')[0];
                     let sql = `SELECT ds.*, r.short_name FROM daily_sales ds 
                                 JOIN restaurants r ON ds.restaurant_id = r.id 
-                        WHERE ds.business_date IN (?, ?, ?)';
+                                        WHERE ds.business_date IN (?, ?, ?)`;
         const params = [date, pyDateStr, lwDateStr];
                 if (restaurantId) { sql += ' AND ds.restaurant_id = ?'; params.push(restaurantId); }return db.prepare(sql).all(...params);
         }
