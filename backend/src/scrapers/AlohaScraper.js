@@ -1,214 +1,315 @@
 import puppeteer from 'puppeteer';
-import { format, subDays } from 'date-fns';
+import { format, subDays, subYears } from 'date-fns';
 import { DailySales } from '../models/DailySales.js';
+import { DailyLabor } from '../models/DailyLabor.js';
 import { Restaurant } from '../models/Restaurant.js';
 import { getDb } from '../database/db.js';
 
 /**
  * Aloha Enterprise Online Scraper
  *
- * Updated with correct selectors for La Hacienda Ranch's Aloha Enterprise instance.
+ * Scrapes daily sales and labor data from the Aloha Drilldown Viewer.
  * Login URL: https://lahaciendaranch.alohaenterprise.com/login.do
- * Dashboard: https://lahaciendaranch.alohaenterprise.com/insightdashboard/dashboard.jsp#/
  *
- * Store IDs (from Aloha system):
+ * Store IDs (discovered 1/24/2026):
  * - Arlington: 2614
- * - Colleyville: (check system)
+ * - Colleyville: 5250
  * - Frisco: 4110
- * - Preston Trail: (check system)
- * - Skillman: (check system)
+ * - Preston Trail: 17390
+ * - Skillman: 6300
+ *
+ * Available data categories:
+ * - Category Sales: All Food, Liquor, Beer, Wine, G.C.'s, Retail
+ * - Labor: Hours, Pay, Labor %
+ * - Guest Count, Check Count
  */
 export class AlohaScraper {
-        constructor() {
-                    this.browser = null;
-                    this.page = null;
-                    // Base URL should be the domain without /login.do - it will be appended in login()
-            this.baseUrl = process.env.ALOHA_URL || 'https://lahaciendaranch.alohaenterprise.com';
-                    this.username = process.env.ALOHA_USERNAME;
-                    this.password = process.env.ALOHA_PASSWORD;
-        }
+    constructor() {
+        this.browser = null;
+        this.page = null;
+        this.baseUrl = process.env.ALOHA_URL || 'https://lahaciendaranch.alohaenterprise.com';
+        this.username = process.env.ALOHA_USERNAME;
+        this.password = process.env.ALOHA_PASSWORD;
+    }
 
     async init() {
-                this.browser = await puppeteer.launch({
-                                headless: 'new',
-                                args: [
-                                                    '--no-sandbox',
-                                                    '--disable-setuid-sandbox',
-                                                    '--disable-dev-shm-usage',
-                                                    '--disable-gpu'
-                                                ]
-                });
-                this.page = await this.browser.newPage();
-                await this.page.setViewport({ width: 1920, height: 1080 });
-                this.page.setDefaultTimeout(30000);
+        this.browser = await puppeteer.launch({
+            headless: 'new',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+            ]
+        });
+        this.page = await this.browser.newPage();
+        await this.page.setViewport({ width: 1920, height: 1080 });
+        this.page.setDefaultTimeout(30000);
     }
 
     async close() {
-                if (this.browser) {
-                                await this.browser.close();
-                }
+        if (this.browser) {
+            await this.browser.close();
+        }
     }
 
     async login() {
-                console.log('Logging into Aloha Enterprise...');
-                const loginUrl = this.baseUrl.replace(/\/$/, '') + '/login.do';
-                await this.page.goto(loginUrl, { waitUntil: 'networkidle2' });
-                await this.page.waitForSelector('input[placeholder="User Name"]');
-                await this.page.type('input[placeholder="User Name"]', this.username);
-                await this.page.type('input[placeholder="Password"]', this.password);
-                await this.page.click('button[type="submit"]');
-                await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
-                try {
-                                const closeButton = await this.page.$('button.close, .modal-close, [data-dismiss="modal"]');
-                                if (closeButton) {
-                                                    await closeButton.click();
-                                                    await this.page.waitForTimeout(1000);
-                                }
-                } catch (e) {
-                                // No popup, continue
-                }
-                console.log('Logged into Aloha');
+        console.log('Logging into Aloha Enterprise...');
+
+        const loginUrl = this.baseUrl.replace(/\/$/, '') + '/login.do';
+        await this.page.goto(loginUrl, { waitUntil: 'networkidle2' });
+
+        // Wait for login form
+        await this.page.waitForSelector('input[placeholder="User Name"], input[type="text"]');
+
+        // Enter credentials
+        await this.page.type('input[placeholder="User Name"], input[type="text"]', this.username);
+        await this.page.type('input[placeholder="Password"], input[type="password"]', this.password);
+
+        // Click login button
+        await this.page.click('button[type="submit"]');
+
+        // Wait for navigation to portal
+        await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+
+        // Handle popup if it appears
+        try {
+            await this.page.waitForSelector('button.close, .modal-close, [data-dismiss="modal"]', { timeout: 3000 });
+            const closeButton = await this.page.$('button.close, .modal-close, [data-dismiss="modal"]');
+            if (closeButton) await closeButton.click();
+        } catch (e) {
+            // No popup
+        }
+
+        console.log('Logged into Aloha');
     }
 
-    async navigateToInsightDashboard() {
-                console.log('Navigating to Aloha Insight Dashboard...');
-                const dashboardUrl = this.baseUrl.replace(/\/$/, '') + '/insightdashboard/dashboard.jsp#/';
-                await this.page.goto(dashboardUrl, { waitUntil: 'networkidle2' });
-                await this.page.waitForSelector('[class*="tile"], .dashboard-tile, [role="listitem"]', { timeout: 15000 });
-                console.log('Dashboard loaded');
+    async navigateToDrilldownViewer(date) {
+        console.log('Navigating to Drilldown Viewer for ' + date + '...');
+
+        const drilldownUrl = this.baseUrl.replace(/\/$/, '') + '/insight/drilldownViewer.jsp';
+        await this.page.goto(drilldownUrl, { waitUntil: 'networkidle2' });
+
+        await this.page.waitForSelector('input[type="text"]', { timeout: 15000 });
+
+        const formattedDate = format(new Date(date), 'M/d/yyyy');
+
+        const dateInputs = await this.page.$$('input[type="text"]');
+        if (dateInputs.length >= 2) {
+            await dateInputs[0].click({ clickCount: 3 });
+            await dateInputs[0].type(formattedDate);
+
+            await dateInputs[1].click({ clickCount: 3 });
+            await dateInputs[1].type(formattedDate);
+        }
+
+        await this.page.keyboard.press('Enter');
+        await this.page.waitForTimeout(2000);
+
+        console.log('Drilldown Viewer loaded');
     }
 
-    async selectStore(storeId) {
-                console.log('Selecting store: ' + storeId);
-                const storeDropdown = await this.page.$('select#store, select[name="location"], .store-selector');
-                if (storeDropdown) {
-                                await this.page.select('select#store, select[name="location"], .store-selector', storeId);
-                                await this.page.waitForTimeout(2000);
-                }
-    }
+    async extractStoreData(storeName) {
+        console.log('Extracting data for ' + storeName + '...');
 
-    async extractFromDashboardTiles() {
-                console.log('Extracting from dashboard tiles...');
-                const data = await this.page.evaluate(() => {
-                                const getTileValue = (tileLabel) => {
-                                                    const tiles = document.querySelectorAll('[role="listitem"], .tile, li');
-                                                    for (const tile of tiles) {
-                                                                            const label = tile.querySelector('[class*="tile-label"], .generic, h3, h4');
-                                                                            if (label && label.textContent.toLowerCase().includes(tileLabel.toLowerCase())) {
-                                                                                                        const value = tile.querySelector('h1, h2, [class*="value"], .heading');
-                                                                                                        if (value) {
-                                                                                                                                        const text = value.textContent.replace(/[$,%,]/g, '').trim();
-                                                                                                                                        return parseFloat(text) || 0;
-                                                                                                            }
-                                                                                }
-                                                    }
-                                                    return 0;
-                                };
-                                return {
-                                                    net_sales: getTileValue('Net Sales'),
-                                                    labor_percent: getTileValue('Labor'),
-                                                    ppa: getTileValue('PPA'),
-                                                    guest_count: getTileValue('Guest Count'),
-                                                    comps: getTileValue('Comps'),
-                                                    promos: getTileValue('Promos'),
-                                                    voids: getTileValue('Voids')
-                                };
-                });
-                if (data.guest_count > 0) {
-                                data.avg_guest_spend = data.net_sales / data.guest_count;
+        try {
+            await this.page.click('a:has-text("' + storeName + '")');
+            await this.page.waitForTimeout(2000);
+        } catch (e) {
+            console.log('Store ' + storeName + ' not found in list');
+            return null;
+        }
+
+        const salesData = await this.page.evaluate(() => {
+            const data = {
+                net_sales: 0,
+                food_sales: 0,
+                liquor_sales: 0,
+                beer_sales: 0,
+                wine_sales: 0,
+                gift_card_sold: 0,
+                retail_sales: 0,
+                guest_count: 0,
+                check_count: 0,
+                total_hours: 0,
+                total_labor_cost: 0,
+                labor_percent: 0
+            };
+
+            const tables = document.querySelectorAll('table');
+            for (const table of tables) {
+                const rows = table.querySelectorAll('tr');
+                for (const row of rows) {
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length >= 2) {
+                        const category = cells[0].textContent.trim().toLowerCase();
+
+                        let salesValue = 0;
+                        for (let i = 1; i < cells.length; i++) {
+                            const cellText = cells[i].textContent.trim();
+                            if (cellText.includes('$') || parseFloat(cellText.replace(/[\$,]/g, '')) > 100) {
+                                salesValue = parseFloat(cellText.replace(/[\$,]/g, '')) || 0;
+                                break;
+                            }
+                        }
+
+                        if (category.includes('all food') || category === 'food') {
+                            data.food_sales = salesValue;
+                        } else if (category === 'liquor') {
+                            data.liquor_sales = salesValue;
+                        } else if (category === 'beer') {
+                            data.beer_sales = salesValue;
+                        } else if (category === 'wine') {
+                            data.wine_sales = salesValue;
+                        } else if (category.includes('g.c') || category.includes('gift')) {
+                            data.gift_card_sold = salesValue;
+                        } else if (category === 'retail') {
+                            data.retail_sales = salesValue;
+                        }
+                    }
                 }
+            }
+
+            data.net_sales = data.food_sales + data.liquor_sales + data.beer_sales +
+                            data.wine_sales + data.gift_card_sold + data.retail_sales;
+            data.alcohol_sales = data.liquor_sales + data.beer_sales + data.wine_sales;
+            data.beverage_sales = data.beer_sales + data.wine_sales;
+
+            return data;
+        });
+
+        try {
+            await this.page.click('text=Labor');
+            await this.page.waitForTimeout(1500);
+
+            const laborData = await this.page.evaluate(() => {
+                const data = { total_hours: 0, total_labor_cost: 0, labor_percent: 0 };
+                const text = document.body.innerText;
+
+                const hoursMatch = text.match(/Hours[:\s]+(\d+\.?\d*)/i);
+                if (hoursMatch) data.total_hours = parseFloat(hoursMatch[1]);
+
+                const payMatch = text.match(/Pay[:\s]+\$?([\d,]+\.?\d*)/i);
+                if (payMatch) data.total_labor_cost = parseFloat(payMatch[1].replace(/,/g, ''));
+
+                const laborPctMatch = text.match(/Labor\s*%[:\s]+(\d+\.?\d*)/i);
+                if (laborPctMatch) data.labor_percent = parseFloat(laborPctMatch[1]);
+
                 return data;
+            });
+
+            Object.assign(salesData, laborData);
+        } catch (e) {
+            console.log('Could not extract labor data');
+        }
+
+        try {
+            await this.page.click('text=< Back');
+            await this.page.waitForTimeout(1000);
+        } catch (e) {
+            // Navigate back
+        }
+
+        return salesData;
     }
 
     async scrapeForDate(targetDate = null) {
-                const date = targetDate || format(subDays(new Date(), 1), 'yyyy-MM-dd');
-                const results = [];
-                const restaurants = Restaurant.getAll();
-                try {
-                                await this.init();
-                                await this.login();
-                                await this.navigateToInsightDashboard();
-                                for (const restaurant of restaurants) {
-                                                    if (!restaurant.aloha_store_id) {
-                                                                            console.log('Skipping ' + restaurant.name + ' - no Aloha store ID configured');
-                                                                            continue;
-                                                    }
-                                                    console.log('Processing: ' + restaurant.name);
-                                                    try {
-                                                                            await this.selectStore(restaurant.aloha_store_id);
-                                                                            await this.page.waitForTimeout(2000);
-                                                                            const salesData = await this.extractFromDashboardTiles();
-                                                                            DailySales.upsert({
-                                                                                                        restaurant_id: restaurant.id,
-                                                                                                        business_date: date,
-                                                                                                        ...salesData,
-                                                                                                        data_source: 'aloha'
-                                                                            });
-                                                                            results.push({
-                                                                                                        restaurant: restaurant.name,
-                                                                                                        date,
-                                                                                                        status: 'success',
-                                                                                                        data: salesData
-                                                                            });
-                                                                            console.log(restaurant.name + ': Net Sales $' + (salesData.net_sales ? salesData.net_sales.toFixed(2) : 'N/A'));
-                                                    } catch (storeError) {
-                                                                            console.error('Error processing ' + restaurant.name + ':', storeError.message);
-                                                                            results.push({
-                                                                                                        restaurant: restaurant.name,
-                                                                                                        date,
-                                                                                                        status: 'error',
-                                                                                                        error: storeError.message
-                                                                            });
-                                                    }
-                                }
-                                this.logScrape('aloha', date, results);
-                } finally {
-                                await this.close();
+        const date = targetDate || format(subDays(new Date(), 1), 'yyyy-MM-dd');
+        const results = [];
+        const restaurants = Restaurant.getAll();
+
+        try {
+            await this.init();
+            await this.login();
+            await this.navigateToDrilldownViewer(date);
+
+            for (const restaurant of restaurants) {
+                if (!restaurant.aloha_store_id) {
+                    console.log('Skipping ' + restaurant.name + ' - no Aloha store ID configured');
+                    continue;
                 }
-                return results;
+
+                console.log('Processing: ' + restaurant.name);
+
+                try {
+                    const storeName = restaurant.short_name || restaurant.name.split(' ').pop();
+                    const salesData = await this.extractStoreData(storeName);
+
+                    if (salesData) {
+                        DailySales.upsert({
+                            restaurant_id: restaurant.id,
+                            business_date: date,
+                            net_sales: salesData.net_sales,
+                            gross_sales: salesData.net_sales,
+                            food_sales: salesData.food_sales,
+                            liquor_sales: salesData.liquor_sales,
+                            beer_sales: salesData.beer_sales,
+                            wine_sales: salesData.wine_sales,
+                            gift_card_sold: salesData.gift_card_sold,
+                            retail_sales: salesData.retail_sales,
+                            alcohol_sales: salesData.alcohol_sales,
+                            beverage_sales: salesData.beverage_sales,
+                            guest_count: salesData.guest_count,
+                            check_count: salesData.check_count,
+                            data_source: 'aloha'
+                        });
+
+                        if (salesData.total_hours > 0 || salesData.total_labor_cost > 0) {
+                            DailyLabor.upsert({
+                                restaurant_id: restaurant.id,
+                                business_date: date,
+                                total_hours: salesData.total_hours,
+                                total_labor_cost: salesData.total_labor_cost,
+                                labor_percent: salesData.labor_percent,
+                                data_source: 'aloha'
+                            });
+                        }
+
+                        results.push({
+                            restaurant: restaurant.name,
+                            date,
+                            status: 'success',
+                            data: salesData
+                        });
+
+                        console.log(restaurant.name + ': Net Sales $' + (salesData.net_sales ? salesData.net_sales.toFixed(2) : 'N/A'));
+                    }
+
+                } catch (storeError) {
+                    console.error('Error processing ' + restaurant.name + ':', storeError.message);
+                    results.push({
+                        restaurant: restaurant.name,
+                        date,
+                        status: 'error',
+                        error: storeError.message
+                    });
+                }
+            }
+
+            this.logScrape('aloha', date, results);
+
+        } finally {
+            await this.close();
+        }
+
+        return results;
     }
 
     logScrape(type, date, results) {
-                const db = getDb();
-                const successful = results.filter(r => r.status === 'success').length;
-                const failed = results.filter(r => r.status === 'error').length;
-                db.prepare('INSERT INTO scrape_log (scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)').run(
-                                type,
-                                date,
-                                failed > 0 ? 'partial' : 'success',
-                                successful,
-                                failed > 0 ? failed + ' stores failed' : null
-                            );
-    }
+        const db = getDb();
+        const successful = results.filter(r => r.status === 'success').length;
+        const failed = results.filter(r => r.status === 'error').length;
 
-            // Scrape category sales from Aloha Drilldown Viewer
-            async scrapeCategorySales(storeId, date) {
-                            const url = `https://lahaciendaranch.alohaenterprise.com/insightdashboard/drilldownviewer.jsp?store=${storeId}`;
-                            try {
-                                                await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-                                                const data = await this.page.evaluate(() => {
-                                                                        const result = { food_sales: 0, liquor_sales: 0, beer_sales: 0, wine_sales: 0, gift_card_sales: 0, retail_sales: 0 };
-                                                                        document.querySelectorAll('tr').forEach(row => {
-                                                                                                    const cells = row.querySelectorAll('td');
-                                                                                                    if (cells.length >= 2) {
-                                                                                                                                    const label = cells[0].textContent.trim();
-                                                                                                                                    const val = parseFloat(cells[1].textContent.replace(/[$,]/g, '')) || 0;
-                                                                                                                                    if (label.includes('Food')) result.food_sales = val;
-                                                                                                                                    else if (label.includes('Liquor')) result.liquor_sales = val;
-                                                                                                                                    else if (label.includes('Beer')) result.beer_sales = val;
-                                                                                                                                    else if (label.includes('Wine')) result.wine_sales = val;
-                                                                                                                                    else if (label.includes('G.C.')) result.gift_card_sales = val;
-                                                                                                                                    else if (label.includes('Retail')) result.retail_sales = val;
-                                                                                                            }
-                                                                        });
-                                                                        return result;
-                                                });
-                                                return data;
-                            } catch (err) {
-                                                console.error('Category scrape error:', err.message);
-                                                return null;
-                            }
-            }
+        db.prepare(
+            'INSERT INTO scrape_log (scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)'
+        ).run(
+            type,
+            date,
+            failed > 0 ? 'partial' : 'success',
+            successful,
+            failed > 0 ? failed + ' stores failed' : null
+        );
+    }
 }
 
 export default AlohaScraper;
