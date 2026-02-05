@@ -50,7 +50,6 @@ export class AlohaScraper {
         console.log('Navigating to Insight Dashboard...');
         await this.page.goto(this.baseUrl + '/insightdashboard/dashboard.jsp#/', { waitUntil: 'networkidle2', timeout: 60000 });
         await this.page.waitForSelector('li, [role="listitem"], table', { timeout: 30000 });
-        await this.page.waitForTimeout(3000);
         await delay(3000);    }
 
     async extractDashboardData() {
