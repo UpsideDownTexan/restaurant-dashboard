@@ -5,6 +5,9 @@ import { DailyLabor } from '../models/DailyLabor.js';
 import { Restaurant } from '../models/Restaurant.js';
 import { getDb } from '../database/db.js';
 
+
+// Helper function to replace deprecated waitForTimeout
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 export class AlohaScraper {
     constructor() {
         this.browser = null;
@@ -48,8 +51,7 @@ export class AlohaScraper {
         await this.page.goto(this.baseUrl + '/insightdashboard/dashboard.jsp#/', { waitUntil: 'networkidle2', timeout: 60000 });
         await this.page.waitForSelector('li, [role="listitem"], table', { timeout: 30000 });
         await this.page.waitForTimeout(3000);
-        console.log('Dashboard loaded');
-    }
+        await delay(3000);    }
 
     async extractDashboardData() {
         console.log('Extracting dashboard data...');
