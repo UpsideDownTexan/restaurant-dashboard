@@ -39,13 +39,14 @@ export class AlohaScraper {
         await this.page.type('input[type="password"], input[name="password"]', this.password);
         await this.page.click('input[type="submit"], button[type="submit"], .btn-primary');
         await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
-
         try {
-            const noButton = await this.page.$('button:has-text("No"), input[value="No"]');
-            if (noButton) await noButton.click();
-            await delay(500);
-        } catch (e) {}
-
+            const buttons = await this.page.$$('button');
+            for (const btn of buttons) {
+                const text = await this.page.evaluate(el => el.textContent.trim(), btn);
+                if (text === 'No') { await btn.click(); break; }
+            }
+            await delay(1000);
+        } catch (e) { console.log('No alert dialog to dismiss'); }
         console.log('Logged into Aloha');
     }
 
@@ -55,120 +56,223 @@ export class AlohaScraper {
             waitUntil: 'networkidle2',
             timeout: 60000
         });
+        console.log('Waiting for Angular and dashboard data...');
+        await this.page.waitForFunction(() => {
+            return typeof angular !== 'undefined' && document.body.innerText.includes('ALL METRICS');
+        }, { timeout: 30000 });
         await delay(5000);
-        console.log('Dashboard loaded');
+        console.log('Dashboard loaded with ALL METRICS table');
+    }
+
+    async enableAngularDebug() {
+        console.log('Enabling Angular debug info...');
+        const needsReload = await this.page.evaluate(() => {
+            const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
+            if (!gridEl) return true;
+            const scope = angular.element(gridEl).scope();
+            return !scope;
+        });
+        if (needsReload) {
+            console.log('Reloading with Angular debug info enabled...');
+            await this.page.evaluate(() => { angular.reloadWithDebugInfo(); });
+            await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
+            await this.page.waitForFunction(() => {
+                return typeof angular !== 'undefined' && document.body.innerText.includes('ALL METRICS');
+            }, { timeout: 30000 });
+            await delay(5000);
+            console.log('Page reloaded with debug info');
+        } else {
+            console.log('Angular debug info already available');
+        }
+    }
+
+    async switchToYesterdayView() {
+        console.log('Switching ALL METRICS to Yesterday view...');
+        const switched = await this.page.evaluate(() => {
+            try {
+                const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
+                if (!gridEl) return { success: false, error: 'MetricGridController not found' };
+                const scope = angular.element(gridEl).scope();
+                if (!scope) return { success: false, error: 'scope not available' };
+                const ctrl = scope.ctrl;
+                if (!ctrl) return { success: false, error: 'ctrl not available' };
+                const opt = ctrl.dateOptionList.find(d => d.name === 'Yesterday');
+                if (!opt) return { success: false, error: 'Yesterday not in: ' + ctrl.dateOptionList.map(d => d.name).join(', ') };
+                ctrl.dateOption = opt;
+                ctrl.hasChanged();
+                scope.$apply();
+                return { success: true, dateOption: opt.name };
+            } catch (e) { return { success: false, error: e.message }; }
+        });
+        console.log('Date switch result:', JSON.stringify(switched));
+        if (!switched.success) { console.warn('Could not switch to Yesterday:', switched.error); }
+        await delay(5000);
     }
 
     async extractDashboardData() {
-        console.log('Extracting dashboard data...');
-
-        const data = await this.page.evaluate(() => {
-            const text = document.body.innerText;
-            const results = {
-                stores: {},
-                totals: { net_sales: 0, labor_percent: 0, labor_cost: 0, guest_count: 0, comps: 0, voids: 0 }
-            };
-
-            const netSalesMatch = text.match(/Net Sales[\s\S]*?([\d,]+\.\d{2})/);
-            const laborMatch = text.match(/Labor \(%\)[\s\S]*?([\d.]+)\s*%/);
-            const guestMatch = text.match(/Guest Count[\s\S]*?([\d,]+)/);
-            const compsMatch = text.match(/Comps[\s\S]*?([\d,]+\.\d{2})/);
-            const voidsMatch = text.match(/Voids[\s\S]*?([\d,]+\.\d{2})/);
-
-            if (netSalesMatch) results.totals.net_sales = parseFloat(netSalesMatch[1].replace(/,/g, ''));
-            if (laborMatch) results.totals.labor_percent = parseFloat(laborMatch[1]);
-            if (guestMatch) results.totals.guest_count = parseInt(guestMatch[1].replace(/,/g, ''));
-            if (compsMatch) results.totals.comps = parseFloat(compsMatch[1].replace(/,/g, ''));
-            if (voidsMatch) results.totals.voids = parseFloat(voidsMatch[1].replace(/,/g, ''));
-
-            const storeNames = ['Arlington', 'Colleyville', 'Frisco', 'Preston Trail', 'Skillman'];
-            const perStore = {
-                net_sales: results.totals.net_sales / 5,
-                labor_percent: results.totals.labor_percent,
-                guest_count: Math.round(results.totals.guest_count / 5),
-                comps: results.totals.comps / 5,
-                voids: results.totals.voids / 5
-            };
-
-            storeNames.forEach(name => {
-                results.stores[name] = { name, ...perStore };
-            });
-
-            return results;
+        console.log('Extracting dashboard data from Angular scope...');
+        const angularData = await this.page.evaluate(() => {
+            try {
+                const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
+                if (!gridEl) return null;
+                const scope = angular.element(gridEl).scope();
+                if (!scope || !scope.ctrl) return null;
+                const ctrl = scope.ctrl;
+                const gridData = ctrl.gridData;
+                if (!gridData || gridData.length < 4) return null;
+                const stores = {};
+                const totals = {};
+                const grandTotalRow = gridData[2];
+                if (grandTotalRow) {
+                    totals.net_sales = grandTotalRow[1] ? (grandTotalRow[1].v || 0) : 0;
+                    totals.labor_percent = grandTotalRow[6] ? (grandTotalRow[6].v || 0) : 0;
+                    totals.guest_count = grandTotalRow[14] ? (grandTotalRow[14].v || 0) : 0;
+                }
+                for (let i = 3; i < gridData.length; i++) {
+                    const row = gridData[i];
+                    if (!row || !row[0]) continue;
+                    const storeName = row[0].f || row[0];
+                    if (typeof storeName !== 'string' || storeName.length === 0) continue;
+                    stores[storeName] = {
+                        name: storeName,
+                        net_sales: row[1] ? (row[1].v || 0) : 0,
+                        net_sales_ly: row[2] ? (row[2].v || 0) : 0,
+                        labor_hours: row[4] ? (row[4].v || 0) : 0,
+                        labor_amount: row[5] ? (row[5].v || 0) : 0,
+                        labor_percent: row[6] ? (row[6].v || 0) : 0,
+                        comp_count: row[9] ? (row[9].v || 0) : 0,
+                        comp_amount: row[10] ? (row[10].v || 0) : 0,
+                        void_count: row[11] ? (row[11].v || 0) : 0,
+                        void_amount: row[12] ? (row[12].v || 0) : 0,
+                        check_count: row[13] ? (row[13].v || 0) : 0,
+                        guest_count: row[14] ? (row[14].v || 0) : 0,
+                        ppa: row[16] ? (row[16].v || 0) : 0,
+                        check_avg: row[17] ? (row[17].v || 0) : 0
+                    };
+                }
+                return {
+                    source: 'angular_scope',
+                    currentDateOption: ctrl.dateOption ? ctrl.dateOption.name : 'unknown',
+                    stores, totals,
+                    storeCount: Object.keys(stores).length
+                };
+            } catch (e) { return { source: 'angular_scope', error: e.message }; }
         });
-
-        console.log('Data extracted:', JSON.stringify(data));
-        return data;
+        if (angularData && angularData.storeCount > 0) {
+            console.log('Angular extraction: ' + angularData.storeCount + ' stores (' + angularData.currentDateOption + ')');
+            return angularData;
+        }
+        console.log('Angular failed, falling back to text parsing...');
+        const textData = await this.page.evaluate(() => {
+            try {
+                const text = document.body.innerText;
+                const idx = text.indexOf('ALL METRICS');
+                if (idx === -1) return { source: 'text_fallback', error: 'ALL METRICS not found' };
+                const lines = text.substring(idx).split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                const stores = {};
+                const names = ['Arlington', 'Colleyville', 'Frisco', 'Preston Trail', 'Skillman'];
+                for (const line of lines) {
+                    for (const sn of names) {
+                        if (line.startsWith(sn + '\t')) {
+                            const p = line.split('\t');
+                            if (p.length >= 15) {
+                                const pn = (s) => s ? parseFloat(s.replace(/,/g, '')) || 0 : 0;
+                                stores[sn] = {
+                                    name: sn, net_sales: pn(p[1]), net_sales_ly: pn(p[2]),
+                                    labor_hours: pn(p[4]), labor_amount: pn(p[5]), labor_percent: pn(p[6]),
+                                    comp_amount: pn(p[10]), void_amount: pn(p[12]),
+                                    check_count: pn(p[13]), guest_count: pn(p[14]),
+                                    ppa: pn(p[16]), check_avg: pn(p[17])
+                                };
+                            }
+                        }
+                    }
+                }
+                return { source: 'text_fallback', stores, totals: {}, storeCount: Object.keys(stores).length };
+            } catch (e) { return { source: 'text_fallback', error: e.message }; }
+        });
+        if (textData && textData.storeCount > 0) { console.log('Text fallback: ' + textData.storeCount + ' stores'); return textData; }
+        console.error('All extraction methods failed');
+        const dbg = await this.page.evaluate(() => ({
+            url: window.location.href, title: document.title,
+            hasAngular: typeof angular !== 'undefined',
+            bodyLen: document.body.innerText.length,
+            preview: document.body.innerText.substring(0, 500),
+            hasAllMetrics: document.body.innerText.includes('ALL METRICS')
+        }));
+        console.log('Debug:', JSON.stringify(dbg, null, 2));
+        return { stores: {}, totals: { net_sales: 0 }, storeCount: 0 };
     }
 
     async scrapeForDate(targetDate = null) {
         const date = targetDate || format(subDays(new Date(), 1), 'yyyy-MM-dd');
         const results = [];
         const restaurants = Restaurant.getAll();
-        const storeNameMap = {
-            'MAR-ARL': 'Arlington',
-            'LHR-COL': 'Colleyville',
-            'LHR-FRI': 'Frisco',
-            'LHR-PLA': 'Preston Trail',
-            'LHR-SKI': 'Skillman',
-            'MAR-DAL': 'Skillman'
-        };
-
+        console.log('Scraping Aloha data for date: ' + date);
+        console.log('Found ' + restaurants.length + ' restaurants in database');
         try {
             await this.init();
             await this.login();
             await this.navigateToDashboard();
+            await this.enableAngularDebug();
+            await this.switchToYesterdayView();
             const dashboardData = await this.extractDashboardData();
-
+            console.log('Extraction: ' + dashboardData.storeCount + ' stores, source: ' + dashboardData.source);
+            if (dashboardData.storeCount === 0) {
+                console.error('No store data extracted');
+                for (const r of restaurants) { results.push({ restaurant: r.name, date, status: 'no_data', reason: 'extraction_failed' }); }
+                this.logScrape('aloha', date, results);
+                return results;
+            }
             for (const restaurant of restaurants) {
-                const alohaStoreName = storeNameMap[restaurant.short_name];
-                const storeData = dashboardData.stores[alohaStoreName];
-
-                console.log(`Processing: ${restaurant.name} (${alohaStoreName})`);
-
+                let storeData = null;
+                for (const [alohaName, data] of Object.entries(dashboardData.stores)) {
+                    if (restaurant.name.toLowerCase().includes(alohaName.toLowerCase())) {
+                        storeData = data;
+                        break;
+                    }
+                }
+                console.log('Processing: ' + restaurant.name + ' -> ' + (storeData ? 'MATCHED' : 'NO MATCH'));
                 if (storeData && storeData.net_sales > 0) {
                     DailySales.upsert({
-                        restaurant_id: restaurant.id,
-                        business_date: date,
-                        net_sales: storeData.net_sales,
-                        gross_sales: storeData.net_sales,
-                        guest_count: storeData.guest_count,
-                        comps: storeData.comps,
-                        voids: storeData.voids,
+                        restaurant_id: restaurant.id, business_date: date,
+                        net_sales: storeData.net_sales, gross_sales: storeData.net_sales,
+                        guest_count: storeData.guest_count, check_count: storeData.check_count,
+                        avg_check: storeData.check_avg, avg_guest_spend: storeData.ppa,
+                        comps: storeData.comp_amount, voids: storeData.void_amount,
                         data_source: 'aloha'
                     });
-
                     DailyLabor.upsert({
-                        restaurant_id: restaurant.id,
-                        business_date: date,
+                        restaurant_id: restaurant.id, business_date: date,
                         labor_percent: storeData.labor_percent,
-                        total_labor_cost: 0,
+                        total_labor_cost: storeData.labor_amount,
+                        total_hours: storeData.labor_hours,
                         data_source: 'aloha'
                     });
-
-                    results.push({ restaurant: restaurant.name, date, status: 'success', data: storeData });
-                    console.log(`${restaurant.name}: Sales $${storeData.net_sales.toFixed(2)}, Labor ${storeData.labor_percent}%`);
+                    results.push({ restaurant: restaurant.name, date, status: 'success',
+                        data: { net_sales: storeData.net_sales, labor_pct: storeData.labor_percent, guest_count: storeData.guest_count }
+                    });
+                    console.log('  ' + restaurant.name + ': Sales $' + storeData.net_sales.toFixed(2) + ', Labor ' + storeData.labor_percent + '%');
                 } else {
-                    results.push({ restaurant: restaurant.name, date, status: 'no_data' });
+                    results.push({ restaurant: restaurant.name, date, status: 'no_data', reason: storeData ? 'zero_sales' : 'no_match' });
                 }
             }
-
             this.logScrape('aloha', date, results);
+        } catch (error) {
+            console.error('Scrape error:', error.message);
+            for (const r of restaurants) { results.push({ restaurant: r.name, date, status: 'error', error: error.message }); }
+            try { this.logScrape('aloha', date, results); } catch (e) {}
         } finally {
             await this.close();
         }
-
         return results;
     }
 
     logScrape(type, date, results) {
         const db = getDb();
-        const successful = results.filter(r => r.status === 'success').length;
-        const failed = results.filter(r => r.status !== 'success').length;
-        db.prepare(`
-            INSERT INTO scrape_log (scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
-        `).run(type, date, failed > 0 ? 'partial' : 'success', successful, null);
+        const ok = results.filter(r => r.status === 'success').length;
+        const fail = results.filter(r => r.status !== 'success').length;
+        db.prepare('INSERT INTO scrape_log (scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)').run(type, date, fail > 0 ? 'partial' : 'success', ok, null);
     }
 }
 
