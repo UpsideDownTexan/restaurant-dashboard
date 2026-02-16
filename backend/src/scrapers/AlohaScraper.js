@@ -41,7 +41,6 @@ export class AlohaScraper {
     async init() {
         const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser';
         this.logStep('init', { executablePath: execPath, baseUrl: this.baseUrl, hasUser: !!this.username, hasPass: !!this.password });
-
         this.browser = await puppeteer.launch({
             headless: 'new',
             executablePath: execPath,
@@ -70,7 +69,6 @@ export class AlohaScraper {
     async login() {
         const loginUrl = this.baseUrl + '/login.do';
         this.logStep('login', 'Navigating to ' + loginUrl);
-
         await this.page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 45000 });
 
         let diag = await this.getPageDiag();
@@ -83,31 +81,71 @@ export class AlohaScraper {
             diag = await this.getPageDiag();
             throw new Error('No input fields on login page. URL: ' + diag.url + ' Preview: ' + (diag.preview || '').substring(0, 200));
         }
+        // Use page.evaluate to set values directly - this properly triggers Angular model binding
+        // The Aloha login form uses AngularJS 1.x with ng-model on inputs
+        // page.type() doesn't reliably trigger Angular's $digest cycle
+        const fillResult = await this.page.evaluate((username, password) => {
+            const usernameInput = document.querySelector('#login-username')
+                || document.querySelector('input[name="loginName"]')
+                || document.querySelector('input[type="text"]')
+                || document.querySelector('input[type="email"]');
+            const passwordInput = document.querySelector('#login-password')
+                || document.querySelector('input[name="password"]')
+                || document.querySelector('input[type="password"]');
 
-        // Find username field
-        const usernameField = await this.page.$('input[name="username"]')
-            || await this.page.$('input[type="text"]')
-            || await this.page.$('input[type="email"]')
-            || await this.page.$('#username');
+            if (!usernameInput) {
+                const inputs = Array.from(document.querySelectorAll('input')).map(e => ({ type: e.type, name: e.name, id: e.id }));
+                return { success: false, error: 'No username field found', inputs: inputs };
+            }
+            if (!passwordInput) {
+                return { success: false, error: 'No password field found' };
+            }
 
-        if (!usernameField) {
-            const inputs = await this.page.$$eval('input', els => els.map(e => ({ type: e.type, name: e.name, id: e.id })));
-            throw new Error('No username field. Inputs: ' + JSON.stringify(inputs));
+            // Set value directly on the DOM element
+            usernameInput.value = username;
+            usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+            usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+            passwordInput.value = password;
+            passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+            passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+            // Also update Angular model if available
+            if (typeof angular !== 'undefined') {
+                try {
+                    const uScope = angular.element(usernameInput).scope();
+                    if (uScope) {
+                        const uCtrl = angular.element(usernameInput).controller('ngModel');
+                        if (uCtrl) { uCtrl.$setViewValue(username); uCtrl.$render(); }
+                    }
+                    const pScope = angular.element(passwordInput).scope();
+                    if (pScope) {
+                        const pCtrl = angular.element(passwordInput).controller('ngModel');
+                        if (pCtrl) { pCtrl.$setViewValue(password); pCtrl.$render(); }
+                    }
+                } catch (e) {
+                    // Angular update failed, DOM events should still work
+                }
+            }
+
+            return {
+                success: true,
+                usernameField: { name: usernameInput.name, id: usernameInput.id },
+                passwordField: { name: passwordInput.name, id: passwordInput.id }
+            };
+        }, this.username, this.password);
+
+        this.logStep('login_fill', fillResult);
+
+        if (!fillResult.success) {
+            throw new Error('Login fill failed: ' + fillResult.error + (fillResult.inputs ? ' Inputs: ' + JSON.stringify(fillResult.inputs) : ''));
         }
 
-        await usernameField.type(this.username, { delay: 50 });
-        this.logStep('login', 'Username entered');
-
-        const passwordField = await this.page.$('input[type="password"]');
-        if (!passwordField) {
-            throw new Error('No password field found');
-        }
-        await passwordField.type(this.password, { delay: 50 });
-        this.logStep('login', 'Password entered');
+        await delay(500);
 
         // Click submit
-        const submitBtn = await this.page.$('input[type="submit"]')
-            || await this.page.$('button[type="submit"]')
+        const submitBtn = await this.page.$('button[type="submit"]')
+            || await this.page.$('input[type="submit"]')
             || await this.page.$('.btn-primary');
 
         if (submitBtn) {
@@ -135,6 +173,11 @@ export class AlohaScraper {
         diag = await this.getPageDiag();
         this.logStep('login_done', diag);
 
+        // Check if login failed
+        if (diag.preview && diag.preview.includes('incorrect')) {
+            throw new Error('Login failed: ' + diag.preview.substring(0, 200));
+        }
+
         // Dismiss any alert dialog
         try {
             const buttons = await this.page.$$('button');
@@ -154,17 +197,14 @@ export class AlohaScraper {
     async navigateToDashboard() {
         const dashUrl = this.baseUrl + '/insightdashboard/dashboard.jsp#/';
         this.logStep('dashboard', 'Navigating to ' + dashUrl);
-
         await this.page.goto(dashUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-
         let diag = await this.getPageDiag();
         this.logStep('dashboard_loaded', diag);
 
         // Wait for Angular and ALL METRICS
         try {
             await this.page.waitForFunction(() => {
-                return typeof angular !== 'undefined' &&
-                       document.body.innerText.includes('ALL METRICS');
+                return typeof angular !== 'undefined' && document.body.innerText.includes('ALL METRICS');
             }, { timeout: 60000 });
         } catch (e) {
             diag = await this.getPageDiag();
@@ -178,7 +218,6 @@ export class AlohaScraper {
 
     async enableAngularDebug() {
         this.logStep('angularDebug', 'Checking scope availability...');
-
         const checkResult = await this.page.evaluate(() => {
             const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
             if (!gridEl) return { reload: true, reason: 'no MetricGridController element' };
@@ -189,7 +228,6 @@ export class AlohaScraper {
                 return { reload: true, reason: e.message };
             }
         });
-
         this.logStep('angularDebug', checkResult);
 
         if (checkResult.reload) {
@@ -205,8 +243,7 @@ export class AlohaScraper {
 
             try {
                 await this.page.waitForFunction(() => {
-                    return typeof angular !== 'undefined' &&
-                           document.body.innerText.includes('ALL METRICS');
+                    return typeof angular !== 'undefined' && document.body.innerText.includes('ALL METRICS');
                 }, { timeout: 60000 });
             } catch (e) {
                 const diag = await this.getPageDiag();
@@ -221,7 +258,6 @@ export class AlohaScraper {
 
     async switchToYesterdayView() {
         this.logStep('switchDate', 'Switching to Yesterday...');
-
         const result = await this.page.evaluate(() => {
             try {
                 const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
@@ -243,7 +279,6 @@ export class AlohaScraper {
                 return { success: false, error: e.message };
             }
         });
-
         this.logStep('switchDate', result);
         if (!result.success) {
             console.warn('Could not switch to Yesterday:', result.error);
@@ -253,24 +288,20 @@ export class AlohaScraper {
 
     async extractDashboardData() {
         this.logStep('extract', 'Extracting from Angular scope...');
-
         const angularData = await this.page.evaluate(() => {
             try {
                 const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
                 if (!gridEl) return { source: 'angular', error: 'no grid element' };
                 const scope = angular.element(gridEl).scope();
                 if (!scope || !scope.ctrl) return { source: 'angular', error: 'no scope/ctrl' };
-
                 const ctrl = scope.ctrl;
                 const gridData = ctrl.gridData;
-
                 if (!gridData || gridData.length < 4) {
                     return { source: 'angular', error: 'gridData too short', len: gridData ? gridData.length : 0 };
                 }
 
                 const stores = {};
                 const totals = {};
-
                 const grandTotalRow = gridData[2];
                 if (grandTotalRow) {
                     totals.net_sales = grandTotalRow[1] ? (grandTotalRow[1].v || 0) : 0;
@@ -305,8 +336,7 @@ export class AlohaScraper {
                 return {
                     source: 'angular_scope',
                     currentDateOption: ctrl.dateOption ? ctrl.dateOption.name : 'unknown',
-                    stores,
-                    totals,
+                    stores, totals,
                     storeCount: Object.keys(stores).length,
                     gridRowCount: gridData.length
                 };
@@ -314,7 +344,6 @@ export class AlohaScraper {
                 return { source: 'angular_scope', error: e.message };
             }
         });
-
         this.logStep('extract', { source: angularData.source, storeCount: angularData.storeCount, error: angularData.error });
 
         if (angularData && angularData.storeCount > 0) {
@@ -323,7 +352,6 @@ export class AlohaScraper {
 
         // Text fallback
         this.logStep('extract', 'Trying text fallback...');
-
         const textData = await this.page.evaluate(() => {
             try {
                 const text = document.body.innerText;
@@ -359,7 +387,6 @@ export class AlohaScraper {
                         }
                     }
                 }
-
                 return { source: 'text_fallback', stores, storeCount: Object.keys(stores).length };
             } catch (e) {
                 return { source: 'text', error: e.message };
@@ -380,7 +407,6 @@ export class AlohaScraper {
         const results = [];
         const restaurants = Restaurant.getAll();
         let currentStep = 'start';
-
         this.logStep('start', { date, restaurantCount: restaurants.length });
 
         try {
@@ -401,7 +427,6 @@ export class AlohaScraper {
 
             currentStep = 'extractDashboardData';
             const dashboardData = await this.extractDashboardData();
-
             this.logStep('process', { storeCount: dashboardData.storeCount, source: dashboardData.source });
 
             if (dashboardData.storeCount === 0) {
@@ -461,18 +486,12 @@ export class AlohaScraper {
                     });
                     results.push({
                         restaurant: restaurant.name,
-                        date,
-                        status: 'success',
+                        date, status: 'success',
                         data: { net_sales: storeData.net_sales, labor_pct: storeData.labor_percent, guest_count: storeData.guest_count }
                     });
                     this.logStep('upsert', { restaurant: restaurant.name, net_sales: storeData.net_sales });
                 } else {
-                    results.push({
-                        restaurant: restaurant.name,
-                        date,
-                        status: 'no_data',
-                        reason: storeData ? 'zero_sales' : 'no_match'
-                    });
+                    results.push({ restaurant: restaurant.name, date, status: 'no_data', reason: storeData ? 'zero_sales' : 'no_match' });
                 }
             }
 
@@ -481,13 +500,7 @@ export class AlohaScraper {
             console.error('Scrape error at [' + currentStep + ']:', error.message);
             console.error('Stack:', error.stack);
             for (const r of restaurants) {
-                results.push({
-                    restaurant: r.name,
-                    date,
-                    status: 'error',
-                    error: '[' + currentStep + '] ' + error.message,
-                    step: currentStep
-                });
+                results.push({ restaurant: r.name, date, status: 'error', error: '[' + currentStep + '] ' + error.message, step: currentStep });
             }
             try { this.logScrape('aloha', date, results); } catch (e) {}
         } finally {
