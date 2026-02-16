@@ -105,7 +105,7 @@ export default function Dashboard() {
         <KPICard
           title="Labor Cost"
           value={kpis.laborCost?.percent}
-          target={kpis.laborCost?.target || 30}
+          target={kpis.laborCost?.target || 20}
           format="percent"
           icon={Users}
           inverse={true}
