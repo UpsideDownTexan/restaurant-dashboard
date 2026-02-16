@@ -7,6 +7,16 @@ import { getDb } from '../database/db.js';
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Map Aloha dashboard store names to restaurant database names
+const ALOHA_STORE_MAP = {
+    'preston trail': 'plano',
+    'skillman': 'dallas',
+    'arlington': 'arlington',
+    'colleyville': 'colleyville',
+    'frisco': 'frisco',
+    'carrollton': 'carrollton'
+};
+
 export class AlohaScraper {
     constructor() {
         this.browser = null;
@@ -476,29 +486,52 @@ export class AlohaScraper {
                 return { results, steps: this.steps };
             }
 
+            // Log all Aloha store names for debugging
+            this.logStep('store_names', { alohaStores: Object.keys(dashboardData.stores) });
+
             for (const restaurant of restaurants) {
                 let storeData = null;
 
-                // Try matching store names
+                // First try explicit ALOHA_STORE_MAP mapping
+                const restLower = restaurant.name.toLowerCase();
                 for (const [alohaName, data] of Object.entries(dashboardData.stores)) {
                     const alohaLower = alohaName.toLowerCase();
-                    const restLower = restaurant.name.toLowerCase();
-                    if (restLower.includes(alohaLower) || alohaLower.includes(restLower.replace('la hacienda ranch ', ''))) {
+                    // Check if Aloha name maps to part of restaurant name via our map
+                    const mappedKeyword = ALOHA_STORE_MAP[alohaLower];
+                    if (mappedKeyword && restLower.includes(mappedKeyword)) {
                         storeData = data;
+                        this.logStep('match', { restaurant: restaurant.name, alohaName, method: 'store_map' });
                         break;
+                    }
+                }
+
+                // Fallback: direct include matching
+                if (!storeData) {
+                    for (const [alohaName, data] of Object.entries(dashboardData.stores)) {
+                        const alohaLower = alohaName.toLowerCase();
+                        if (restLower.includes(alohaLower) || alohaLower.includes(restLower.replace('la hacienda ranch ', '').replace("mariano's ", ''))) {
+                            storeData = data;
+                            this.logStep('match', { restaurant: restaurant.name, alohaName, method: 'direct_include' });
+                            break;
+                        }
                     }
                 }
 
                 // Fuzzy match by last word
                 if (!storeData) {
-                    const nameWords = restaurant.name.toLowerCase().split(/\s+/);
+                    const nameWords = restLower.split(/\s+/);
                     const keyWord = nameWords[nameWords.length - 1];
                     for (const [alohaName, data] of Object.entries(dashboardData.stores)) {
                         if (alohaName.toLowerCase().includes(keyWord)) {
                             storeData = data;
+                            this.logStep('match', { restaurant: restaurant.name, alohaName, method: 'fuzzy_last_word' });
                             break;
                         }
                     }
+                }
+
+                if (!storeData) {
+                    this.logStep('no_match', { restaurant: restaurant.name, alohaStores: Object.keys(dashboardData.stores) });
                 }
 
                 if (storeData && storeData.net_sales > 0) {
@@ -515,11 +548,16 @@ export class AlohaScraper {
                         voids: storeData.void_amount,
                         data_source: 'aloha'
                     });
+                    // Calculate labor cost from percent if not provided
+                    const laborCost = storeData.labor_amount > 0
+                        ? storeData.labor_amount
+                        : (storeData.labor_percent > 0 ? storeData.net_sales * storeData.labor_percent / 100 : 0);
+
                     DailyLabor.upsert({
                         restaurant_id: restaurant.id,
                         business_date: date,
                         labor_percent: storeData.labor_percent,
-                        total_labor_cost: storeData.labor_amount,
+                        total_labor_cost: laborCost,
                         total_hours: storeData.labor_hours,
                         data_source: 'aloha'
                     });
