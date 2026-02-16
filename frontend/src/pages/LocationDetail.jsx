@@ -146,7 +146,7 @@ export default function LocationDetail() {
         <KPICard
           title="Labor %"
           value={avgLaborPercent}
-          target={30}
+          target={20}
           format="percent"
           icon={PieChart}
           inverse={true}
@@ -230,7 +230,7 @@ export default function LocationDetail() {
                       {formatCurrency(laborDay?.total_labor_cost)}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <span className={`font-medium ${laborPercent > 30 ? 'text-red-600' : 'text-green-600'}`}>
+                      <span className={`font-medium ${laborPercent > 20 ? 'text-red-600' : 'text-green-600'}`}>
                         {formatPercent(laborPercent)}
                       </span>
                     </td>
