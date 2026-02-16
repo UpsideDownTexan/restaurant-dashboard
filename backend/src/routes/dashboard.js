@@ -51,7 +51,7 @@ router.get('/summary', (req, res) => {
 
             // Calculate totals
             const totalSales = salesData.reduce((sum, d) => sum + (d.net_sales || 0), 0);
-                    const totalLabor = laborData.reduce((sum, d) => sum + (d.labor_cost || 0), 0);
+                    const totalLabor = laborData.reduce((sum, d) => sum + (d.total_labor_cost || 0), 0);
                     const laborPercent = totalSales > 0 ? (totalLabor / totalSales) * 100 : 0;
 
             // Build summary response
@@ -105,7 +105,7 @@ router.get('/sales', (req, res) => {
 
             const comparison = DailySales.getComparisonByRestaurant(startDate, endDate);
 
-            res.json({
+            res.json {
                             period: { startDate, endDate },
                             daily: salesData,
                             byRestaurant: comparison
@@ -132,11 +132,17 @@ router.get('/labor', (req, res) => {
                         );
                     const comparison = DailyLabor.getComparisonByRestaurant(startDate, endDate);
                     const overtimeAlerts = DailyLabor.getOvertimeAlerts(startDate, endDate, 0);
+                    const fohBohByRestaurant = DailyLabor.getFohBohByRestaurant(startDate, endDate);
+                    const fohBohTotals = DailyLabor.getFohBohTotals(startDate, endDate);
 
             res.json({
                             period: { startDate, endDate },
                             daily: laborWithSales,
                             byRestaurant: comparison,
+                            fohBoh: {
+                                totals: fohBohTotals,
+                                byRestaurant: fohBohByRestaurant
+                            },
                             alerts: {
                                                 overtime: overtimeAlerts
                             }
@@ -179,7 +185,7 @@ router.get('/restaurant/:id', (req, res) => {
             const sales = DailySales.getByDateRange(parseInt(id), startDate, endDate);
                     const labor = DailyLabor.getByDateRange(parseInt(id), startDate, endDate);
 
-            res.json({
+            res.json {
                             restaurant,
                             period: { startDate, endDate },
                             sales,
@@ -205,7 +211,7 @@ router.get('/daily-comparison', (req, res) => {
                             restaurant_id ? parseInt(restaurant_id) : null
                         );
 
-            res.json({
+            res.json {
                             date: targetDate,
                             comparison
             });
@@ -275,7 +281,7 @@ router.get('/sales-breakdown', (req, res) => {
                                                                                                                                                                                                                                                                                                             ORDER BY total_sales DESC
                                                                                                                                                                                                                                                                                                                     `).all(...params);
 
-            res.json({
+            res.json {
                             period: { startDate, endDate },
                             breakdown
             });
