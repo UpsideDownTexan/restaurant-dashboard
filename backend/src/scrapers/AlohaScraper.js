@@ -74,79 +74,69 @@ export class AlohaScraper {
         let diag = await this.getPageDiag();
         this.logStep('login_loaded', diag);
 
-        // Wait for any input field
+        // Wait for the login form inputs to be ready
         try {
-            await this.page.waitForSelector('input', { timeout: 15000 });
+            await this.page.waitForSelector('#login-username, input[name="loginName"]', { timeout: 15000 });
         } catch (e) {
             diag = await this.getPageDiag();
-            throw new Error('No input fields on login page. URL: ' + diag.url + ' Preview: ' + (diag.preview || '').substring(0, 200));
+            throw new Error('No login fields found. URL: ' + diag.url + ' Preview: ' + (diag.preview || '').substring(0, 200));
         }
-        // Use page.evaluate to set values directly - this properly triggers Angular model binding
-        // The Aloha login form uses AngularJS 1.x with ng-model on inputs
-        // page.type() doesn't reliably trigger Angular's $digest cycle
-        const fillResult = await this.page.evaluate((username, password) => {
-            const usernameInput = document.querySelector('#login-username')
-                || document.querySelector('input[name="loginName"]')
-                || document.querySelector('input[type="text"]')
-                || document.querySelector('input[type="email"]');
-            const passwordInput = document.querySelector('#login-password')
-                || document.querySelector('input[name="password"]')
-                || document.querySelector('input[type="password"]');
 
-            if (!usernameInput) {
-                const inputs = Array.from(document.querySelectorAll('input')).map(e => ({ type: e.type, name: e.name, id: e.id }));
-                return { success: false, error: 'No username field found', inputs: inputs };
+        // Wait extra time for any JS frameworks (Angular etc) to initialize
+        await delay(3000);
+
+        // Enable request interception to log what gets sent
+        await this.page.setRequestInterception(true);
+        let postData = null;
+        const requestHandler = (request) => {
+            if (request.method() === 'POST' && request.url().includes('login')) {
+                postData = request.postData();
+                this.logStep('login_post', { url: request.url(), postData: postData });
             }
-            if (!passwordInput) {
-                return { success: false, error: 'No password field found' };
-            }
+            request.continue();
+        };
+        this.page.on('request', requestHandler);
 
-            // Set value directly on the DOM element
-            usernameInput.value = username;
-            usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
-            usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // Approach: Click field, select all, type value - simulates real user
+        const usernameSelector = '#login-username';
+        const passwordSelector = '#login-password';
 
-            passwordInput.value = password;
-            passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
-            passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // Click and type username
+        await this.page.click(usernameSelector);
+        await delay(200);
+        await this.page.keyboard.down('Control');
+        await this.page.keyboard.press('a');
+        await this.page.keyboard.up('Control');
+        await this.page.type(usernameSelector, this.username, { delay: 30 });
+        this.logStep('login', 'Username typed');
 
-            // Also update Angular model if available
-            if (typeof angular !== 'undefined') {
-                try {
-                    const uScope = angular.element(usernameInput).scope();
-                    if (uScope) {
-                        const uCtrl = angular.element(usernameInput).controller('ngModel');
-                        if (uCtrl) { uCtrl.$setViewValue(username); uCtrl.$render(); }
-                    }
-                    const pScope = angular.element(passwordInput).scope();
-                    if (pScope) {
-                        const pCtrl = angular.element(passwordInput).controller('ngModel');
-                        if (pCtrl) { pCtrl.$setViewValue(password); pCtrl.$render(); }
-                    }
-                } catch (e) {
-                    // Angular update failed, DOM events should still work
-                }
-            }
-
-            return {
-                success: true,
-                usernameField: { name: usernameInput.name, id: usernameInput.id },
-                passwordField: { name: passwordInput.name, id: passwordInput.id }
-            };
-        }, this.username, this.password);
-
-        this.logStep('login_fill', fillResult);
-
-        if (!fillResult.success) {
-            throw new Error('Login fill failed: ' + fillResult.error + (fillResult.inputs ? ' Inputs: ' + JSON.stringify(fillResult.inputs) : ''));
-        }
+        // Click and type password
+        await this.page.click(passwordSelector);
+        await delay(200);
+        await this.page.keyboard.down('Control');
+        await this.page.keyboard.press('a');
+        await this.page.keyboard.up('Control');
+        await this.page.type(passwordSelector, this.password, { delay: 30 });
+        this.logStep('login', 'Password typed');
 
         await delay(500);
 
-        // Click submit
+        // Verify values were set
+        const fieldCheck = await this.page.evaluate(() => {
+            const u = document.querySelector('#login-username') || document.querySelector('input[name="loginName"]');
+            const p = document.querySelector('#login-password') || document.querySelector('input[name="password"]');
+            return {
+                username: u ? u.value : null,
+                usernameLen: u ? u.value.length : -1,
+                password: p ? '***(' + p.value.length + ' chars)' : null,
+                passwordLen: p ? p.value.length : -1
+            };
+        });
+        this.logStep('login_verify', fieldCheck);
+
+        // Click the submit button
         const submitBtn = await this.page.$('button[type="submit"]')
-            || await this.page.$('input[type="submit"]')
-            || await this.page.$('.btn-primary');
+            || await this.page.$('input[type="submit"]');
 
         if (submitBtn) {
             this.logStep('login', 'Clicking submit button');
@@ -169,13 +159,62 @@ export class AlohaScraper {
             }
         }
 
+        // Disable interception
+        this.page.removeListener('request', requestHandler);
+        await this.page.setRequestInterception(false);
+
         await delay(2000);
         diag = await this.getPageDiag();
         this.logStep('login_done', diag);
 
         // Check if login failed
         if (diag.preview && diag.preview.includes('incorrect')) {
-            throw new Error('Login failed: ' + diag.preview.substring(0, 200));
+            // If direct form interaction failed, try submitting form data via evaluate
+            this.logStep('login', 'Direct login failed, trying form submit via JS...');
+            await this.page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+            await delay(2000);
+
+            const jsSubmitResult = await this.page.evaluate((username, password) => {
+                const form = document.querySelector('form');
+                if (!form) return { success: false, error: 'No form found' };
+
+                const loginInput = form.querySelector('input[name="loginName"]');
+                const passInput = form.querySelector('input[name="password"]');
+                if (!loginInput || !passInput) return { success: false, error: 'Inputs not found' };
+
+                // Use native setter to bypass any framework interception
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(loginInput, username);
+                nativeSetter.call(passInput, password);
+
+                // Dispatch all possible events
+                ['input', 'change', 'blur', 'keyup', 'keydown'].forEach(evt => {
+                    loginInput.dispatchEvent(new Event(evt, { bubbles: true }));
+                    passInput.dispatchEvent(new Event(evt, { bubbles: true }));
+                });
+
+                // Try form.submit() which bypasses any JS validation
+                try {
+                    form.submit();
+                    return { success: true, method: 'form.submit()' };
+                } catch (e) {
+                    return { success: false, error: e.message };
+                }
+            }, this.username, this.password);
+            this.logStep('login_js_submit', jsSubmitResult);
+
+            if (jsSubmitResult.success) {
+                try {
+                    await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+                } catch (e) {}
+                await delay(2000);
+                diag = await this.getPageDiag();
+                this.logStep('login_done_retry', diag);
+
+                if (diag.preview && diag.preview.includes('incorrect')) {
+                    throw new Error('Login failed after retry: ' + diag.preview.substring(0, 200));
+                }
+            }
         }
 
         // Dismiss any alert dialog
