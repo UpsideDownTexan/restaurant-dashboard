@@ -160,7 +160,7 @@ export class AlohaScraper {
         }
 
         // Disable interception
-        this.page.removeListener('request', requestHandler);
+        this.page.off('request', requestHandler);
         await this.page.setRequestInterception(false);
 
         await delay(2000);
