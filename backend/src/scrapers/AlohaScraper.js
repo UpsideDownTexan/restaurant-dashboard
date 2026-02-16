@@ -387,6 +387,8 @@ export class AlohaScraper {
                     currentDateOption: ctrl.dateOption ? ctrl.dateOption.name : 'unknown',
                     stores, totals,
                     storeCount: Object.keys(stores).length,
+                    columnHeaders: gridData[0] ? gridData[0].map(function(c, i) { return { col: i, val: c ? (c.f || c.v || c) : null }; }) : [],
+                    sampleRow: gridData[3] ? gridData[3].map(function(c, i) { return { col: i, f: c ? c.f : null, v: c ? c.v : null }; }) : [],
                     gridRowCount: gridData.length
                 };
             } catch (e) {
@@ -394,6 +396,14 @@ export class AlohaScraper {
             }
         });
         this.logStep('extract', { source: angularData.source, storeCount: angularData.storeCount, error: angularData.error });
+
+        // Log column structure for FOH/BOH investigation
+        if (angularData.columnHeaders) {
+            this.logStep('grid_columns', angularData.columnHeaders);
+        }
+        if (angularData.sampleRow) {
+            this.logStep('grid_sample', angularData.sampleRow);
+        }
 
         if (angularData && angularData.storeCount > 0) {
             return angularData;
