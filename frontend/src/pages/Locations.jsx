@@ -155,7 +155,7 @@ export default function Locations() {
                 <div>
                   <div className="text-xs text-slate-500 mb-1">Labor %</div>
                   <div className={`font-semibold ${
-                    (restaurant.labor_percent || 0) > 30 ? 'text-red-600' : 'text-slate-900'
+                    (restaurant.labor_percent || 0) > 20 ? 'text-red-600' : 'text-slate-900'
                   }`}>
                     {formatPercent(restaurant.labor_percent)}
                   </div>
