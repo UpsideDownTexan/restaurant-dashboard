@@ -70,7 +70,7 @@ router.get('/summary', (req, res) => {
                                                 laborCost: {
                                                                         value: totalLabor,
                                                                         percent: laborPercent,
-                                                                        target: 30,
+                                                                        target: 20,
                                                                         label: 'Labor Cost'
                                                 }
                             },
