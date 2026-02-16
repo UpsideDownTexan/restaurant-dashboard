@@ -51,7 +51,7 @@ router.get('/summary', (req, res) => {
 
             // Calculate totals
             const totalSales = salesData.reduce((sum, d) => sum + (d.net_sales || 0), 0);
-                    const totalLabor = laborData.reduce((sum, d) => sum + (d.total_labor_cost || 0), 0);
+                    const totalLabor = laborData.reduce((sum, d) => sum + (d.labor_cost || 0), 0);
                     const laborPercent = totalSales > 0 ? (totalLabor / totalSales) * 100 : 0;
 
             // Build summary response
