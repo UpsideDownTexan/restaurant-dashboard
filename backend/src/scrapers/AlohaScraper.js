@@ -5,7 +5,6 @@ import { DailyLabor } from '../models/DailyLabor.js';
 import { Restaurant } from '../models/Restaurant.js';
 import { getDb } from '../database/db.js';
 
-// Helper function to replace deprecated waitForTimeout
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export class AlohaScraper {
@@ -15,80 +14,215 @@ export class AlohaScraper {
         this.baseUrl = process.env.ALOHA_URL || 'https://lahaciendaranch.alohaenterprise.com';
         this.username = process.env.ALOHA_USERNAME;
         this.password = process.env.ALOHA_PASSWORD;
+        this.steps = [];
+    }
+
+    logStep(step, detail) {
+        const entry = { step, detail, time: new Date().toISOString() };
+        this.steps.push(entry);
+        console.log('[STEP] ' + step + ':', typeof detail === 'string' ? detail : JSON.stringify(detail));
+    }
+
+    async getPageDiag() {
+        try {
+            return await this.page.evaluate(() => ({
+                url: window.location.href,
+                title: document.title,
+                bodyLen: document.body.innerText.length,
+                preview: document.body.innerText.substring(0, 500),
+                hasAngular: typeof angular !== 'undefined',
+                hasMetrics: document.body.innerText.includes('ALL METRICS')
+            }));
+        } catch (e) {
+            return { error: e.message };
+        }
     }
 
     async init() {
+        const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser';
+        this.logStep('init', { executablePath: execPath, baseUrl: this.baseUrl, hasUser: !!this.username, hasPass: !!this.password });
+
         this.browser = await puppeteer.launch({
             headless: 'new',
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            executablePath: execPath,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--single-process',
+                '--no-zygote'
+            ]
         });
         this.page = await this.browser.newPage();
         await this.page.setViewport({ width: 1920, height: 1080 });
+        await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
         this.page.setDefaultTimeout(60000);
+        this.logStep('init', 'Browser launched OK');
     }
 
     async close() {
-        if (this.browser) await this.browser.close();
+        if (this.browser) {
+            try { await this.browser.close(); } catch (e) {}
+        }
     }
 
     async login() {
-        console.log('Logging into Aloha Enterprise...');
-        await this.page.goto(this.baseUrl + '/login.do', { waitUntil: 'networkidle2' });
-        await this.page.waitForSelector('input[type="text"], input[name="username"]', { timeout: 15000 });
-        await this.page.type('input[type="text"], input[name="username"]', this.username);
-        await this.page.type('input[type="password"], input[name="password"]', this.password);
-        await this.page.click('input[type="submit"], button[type="submit"], .btn-primary');
-        await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+        const loginUrl = this.baseUrl + '/login.do';
+        this.logStep('login', 'Navigating to ' + loginUrl);
+
+        await this.page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+
+        let diag = await this.getPageDiag();
+        this.logStep('login_loaded', diag);
+
+        // Wait for any input field
+        try {
+            await this.page.waitForSelector('input', { timeout: 15000 });
+        } catch (e) {
+            diag = await this.getPageDiag();
+            throw new Error('No input fields on login page. URL: ' + diag.url + ' Preview: ' + (diag.preview || '').substring(0, 200));
+        }
+
+        // Find username field
+        const usernameField = await this.page.$('input[name="username"]')
+            || await this.page.$('input[type="text"]')
+            || await this.page.$('input[type="email"]')
+            || await this.page.$('#username');
+
+        if (!usernameField) {
+            const inputs = await this.page.$$eval('input', els => els.map(e => ({ type: e.type, name: e.name, id: e.id })));
+            throw new Error('No username field. Inputs: ' + JSON.stringify(inputs));
+        }
+
+        await usernameField.type(this.username, { delay: 50 });
+        this.logStep('login', 'Username entered');
+
+        const passwordField = await this.page.$('input[type="password"]');
+        if (!passwordField) {
+            throw new Error('No password field found');
+        }
+        await passwordField.type(this.password, { delay: 50 });
+        this.logStep('login', 'Password entered');
+
+        // Click submit
+        const submitBtn = await this.page.$('input[type="submit"]')
+            || await this.page.$('button[type="submit"]')
+            || await this.page.$('.btn-primary');
+
+        if (submitBtn) {
+            this.logStep('login', 'Clicking submit button');
+            const [navResult] = await Promise.allSettled([
+                this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 45000 }),
+                submitBtn.click()
+            ]);
+            if (navResult.status === 'rejected') {
+                this.logStep('login', 'Nav timeout after submit, waiting extra...');
+                await delay(5000);
+            }
+        } else {
+            this.logStep('login', 'No submit button, pressing Enter');
+            const [navResult] = await Promise.allSettled([
+                this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 45000 }),
+                this.page.keyboard.press('Enter')
+            ]);
+            if (navResult.status === 'rejected') {
+                await delay(5000);
+            }
+        }
+
+        await delay(2000);
+        diag = await this.getPageDiag();
+        this.logStep('login_done', diag);
+
+        // Dismiss any alert dialog
         try {
             const buttons = await this.page.$$('button');
             for (const btn of buttons) {
                 const text = await this.page.evaluate(el => el.textContent.trim(), btn);
-                if (text === 'No') { await btn.click(); break; }
+                if (text === 'No') {
+                    await btn.click();
+                    this.logStep('login', 'Dismissed alert dialog');
+                    break;
+                }
             }
-            await delay(1000);
-        } catch (e) { console.log('No alert dialog to dismiss'); }
-        console.log('Logged into Aloha');
+        } catch (e) {}
+
+        await delay(1000);
     }
 
     async navigateToDashboard() {
-        console.log('Navigating to Insight Dashboard...');
-        await this.page.goto(this.baseUrl + '/insightdashboard/dashboard.jsp#/', {
-            waitUntil: 'networkidle2',
-            timeout: 60000
-        });
-        console.log('Waiting for Angular and dashboard data...');
-        await this.page.waitForFunction(() => {
-            return typeof angular !== 'undefined' && document.body.innerText.includes('ALL METRICS');
-        }, { timeout: 30000 });
+        const dashUrl = this.baseUrl + '/insightdashboard/dashboard.jsp#/';
+        this.logStep('dashboard', 'Navigating to ' + dashUrl);
+
+        await this.page.goto(dashUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+
+        let diag = await this.getPageDiag();
+        this.logStep('dashboard_loaded', diag);
+
+        // Wait for Angular and ALL METRICS
+        try {
+            await this.page.waitForFunction(() => {
+                return typeof angular !== 'undefined' &&
+                       document.body.innerText.includes('ALL METRICS');
+            }, { timeout: 60000 });
+        } catch (e) {
+            diag = await this.getPageDiag();
+            this.logStep('dashboard_timeout', diag);
+            throw new Error('Dashboard timeout. Angular: ' + diag.hasAngular + ', Metrics: ' + diag.hasMetrics + '. URL: ' + diag.url + '. Preview: ' + (diag.preview || '').substring(0, 200));
+        }
+
         await delay(5000);
-        console.log('Dashboard loaded with ALL METRICS table');
+        this.logStep('dashboard', 'Ready with ALL METRICS');
     }
 
     async enableAngularDebug() {
-        console.log('Enabling Angular debug info...');
-        const needsReload = await this.page.evaluate(() => {
+        this.logStep('angularDebug', 'Checking scope availability...');
+
+        const checkResult = await this.page.evaluate(() => {
             const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
-            if (!gridEl) return true;
-            const scope = angular.element(gridEl).scope();
-            return !scope;
+            if (!gridEl) return { reload: true, reason: 'no MetricGridController element' };
+            try {
+                const scope = angular.element(gridEl).scope();
+                return scope ? { reload: false } : { reload: true, reason: 'scope is null' };
+            } catch (e) {
+                return { reload: true, reason: e.message };
+            }
         });
-        if (needsReload) {
-            console.log('Reloading with Angular debug info enabled...');
-            await this.page.evaluate(() => { angular.reloadWithDebugInfo(); });
-            await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
-            await this.page.waitForFunction(() => {
-                return typeof angular !== 'undefined' && document.body.innerText.includes('ALL METRICS');
-            }, { timeout: 30000 });
+
+        this.logStep('angularDebug', checkResult);
+
+        if (checkResult.reload) {
+            this.logStep('angularDebug', 'Reloading with debug info...');
+            await this.page.evaluate(() => angular.reloadWithDebugInfo());
+
+            try {
+                await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
+            } catch (e) {
+                this.logStep('angularDebug', 'Nav timeout after reload, waiting...');
+                await delay(10000);
+            }
+
+            try {
+                await this.page.waitForFunction(() => {
+                    return typeof angular !== 'undefined' &&
+                           document.body.innerText.includes('ALL METRICS');
+                }, { timeout: 60000 });
+            } catch (e) {
+                const diag = await this.getPageDiag();
+                this.logStep('angularDebug_timeout', diag);
+                throw new Error('Angular reload timeout. ' + JSON.stringify(diag));
+            }
+
             await delay(5000);
-            console.log('Page reloaded with debug info');
-        } else {
-            console.log('Angular debug info already available');
+            this.logStep('angularDebug', 'Reloaded successfully');
         }
     }
 
     async switchToYesterdayView() {
-        console.log('Switching ALL METRICS to Yesterday view...');
-        const switched = await this.page.evaluate(() => {
+        this.logStep('switchDate', 'Switching to Yesterday...');
+
+        const result = await this.page.evaluate(() => {
             try {
                 const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
                 if (!gridEl) return { success: false, error: 'MetricGridController not found' };
@@ -96,43 +230,60 @@ export class AlohaScraper {
                 if (!scope) return { success: false, error: 'scope not available' };
                 const ctrl = scope.ctrl;
                 if (!ctrl) return { success: false, error: 'ctrl not available' };
+
+                const dateOptions = ctrl.dateOptionList.map(d => ({ id: d.id, name: d.name }));
                 const opt = ctrl.dateOptionList.find(d => d.name === 'Yesterday');
-                if (!opt) return { success: false, error: 'Yesterday not in: ' + ctrl.dateOptionList.map(d => d.name).join(', ') };
+                if (!opt) return { success: false, error: 'Yesterday not found', dateOptions };
+
                 ctrl.dateOption = opt;
                 ctrl.hasChanged();
                 scope.$apply();
                 return { success: true, dateOption: opt.name };
-            } catch (e) { return { success: false, error: e.message }; }
+            } catch (e) {
+                return { success: false, error: e.message };
+            }
         });
-        console.log('Date switch result:', JSON.stringify(switched));
-        if (!switched.success) { console.warn('Could not switch to Yesterday:', switched.error); }
+
+        this.logStep('switchDate', result);
+        if (!result.success) {
+            console.warn('Could not switch to Yesterday:', result.error);
+        }
         await delay(5000);
     }
 
     async extractDashboardData() {
-        console.log('Extracting dashboard data from Angular scope...');
+        this.logStep('extract', 'Extracting from Angular scope...');
+
         const angularData = await this.page.evaluate(() => {
             try {
                 const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
-                if (!gridEl) return null;
+                if (!gridEl) return { source: 'angular', error: 'no grid element' };
                 const scope = angular.element(gridEl).scope();
-                if (!scope || !scope.ctrl) return null;
+                if (!scope || !scope.ctrl) return { source: 'angular', error: 'no scope/ctrl' };
+
                 const ctrl = scope.ctrl;
                 const gridData = ctrl.gridData;
-                if (!gridData || gridData.length < 4) return null;
+
+                if (!gridData || gridData.length < 4) {
+                    return { source: 'angular', error: 'gridData too short', len: gridData ? gridData.length : 0 };
+                }
+
                 const stores = {};
                 const totals = {};
+
                 const grandTotalRow = gridData[2];
                 if (grandTotalRow) {
                     totals.net_sales = grandTotalRow[1] ? (grandTotalRow[1].v || 0) : 0;
                     totals.labor_percent = grandTotalRow[6] ? (grandTotalRow[6].v || 0) : 0;
                     totals.guest_count = grandTotalRow[14] ? (grandTotalRow[14].v || 0) : 0;
                 }
+
                 for (let i = 3; i < gridData.length; i++) {
                     const row = gridData[i];
                     if (!row || !row[0]) continue;
                     const storeName = row[0].f || row[0];
                     if (typeof storeName !== 'string' || storeName.length === 0) continue;
+
                     stores[storeName] = {
                         name: storeName,
                         net_sales: row[1] ? (row[1].v || 0) : 0,
@@ -150,129 +301,213 @@ export class AlohaScraper {
                         check_avg: row[17] ? (row[17].v || 0) : 0
                     };
                 }
+
                 return {
                     source: 'angular_scope',
                     currentDateOption: ctrl.dateOption ? ctrl.dateOption.name : 'unknown',
-                    stores, totals,
-                    storeCount: Object.keys(stores).length
+                    stores,
+                    totals,
+                    storeCount: Object.keys(stores).length,
+                    gridRowCount: gridData.length
                 };
-            } catch (e) { return { source: 'angular_scope', error: e.message }; }
+            } catch (e) {
+                return { source: 'angular_scope', error: e.message };
+            }
         });
+
+        this.logStep('extract', { source: angularData.source, storeCount: angularData.storeCount, error: angularData.error });
+
         if (angularData && angularData.storeCount > 0) {
-            console.log('Angular extraction: ' + angularData.storeCount + ' stores (' + angularData.currentDateOption + ')');
             return angularData;
         }
-        console.log('Angular failed, falling back to text parsing...');
+
+        // Text fallback
+        this.logStep('extract', 'Trying text fallback...');
+
         const textData = await this.page.evaluate(() => {
             try {
                 const text = document.body.innerText;
                 const idx = text.indexOf('ALL METRICS');
-                if (idx === -1) return { source: 'text_fallback', error: 'ALL METRICS not found' };
-                const lines = text.substring(idx).split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                if (idx === -1) return { source: 'text', error: 'ALL METRICS not found' };
+
+                const section = text.substring(idx);
+                const lines = section.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                 const stores = {};
                 const names = ['Arlington', 'Colleyville', 'Frisco', 'Preston Trail', 'Skillman'];
+
                 for (const line of lines) {
                     for (const sn of names) {
-                        if (line.startsWith(sn + '\t')) {
-                            const p = line.split('\t');
-                            if (p.length >= 15) {
-                                const pn = (s) => s ? parseFloat(s.replace(/,/g, '')) || 0 : 0;
+                        if (line.startsWith(sn + '\t') || line.startsWith(sn + ' ')) {
+                            const parts = line.split(/\t+/);
+                            if (parts.length >= 15) {
+                                const pn = (s) => s ? parseFloat(s.replace(/[$,%]/g, '').replace(/,/g, '')) || 0 : 0;
                                 stores[sn] = {
-                                    name: sn, net_sales: pn(p[1]), net_sales_ly: pn(p[2]),
-                                    labor_hours: pn(p[4]), labor_amount: pn(p[5]), labor_percent: pn(p[6]),
-                                    comp_amount: pn(p[10]), void_amount: pn(p[12]),
-                                    check_count: pn(p[13]), guest_count: pn(p[14]),
-                                    ppa: pn(p[16]), check_avg: pn(p[17])
+                                    name: sn,
+                                    net_sales: pn(parts[1]),
+                                    net_sales_ly: pn(parts[2]),
+                                    labor_hours: pn(parts[4]),
+                                    labor_amount: pn(parts[5]),
+                                    labor_percent: pn(parts[6]),
+                                    comp_amount: pn(parts[10]),
+                                    void_amount: pn(parts[12]),
+                                    check_count: pn(parts[13]),
+                                    guest_count: pn(parts[14]),
+                                    ppa: pn(parts[16]),
+                                    check_avg: pn(parts[17])
                                 };
                             }
                         }
                     }
                 }
-                return { source: 'text_fallback', stores, totals: {}, storeCount: Object.keys(stores).length };
-            } catch (e) { return { source: 'text_fallback', error: e.message }; }
+
+                return { source: 'text_fallback', stores, storeCount: Object.keys(stores).length };
+            } catch (e) {
+                return { source: 'text', error: e.message };
+            }
         });
-        if (textData && textData.storeCount > 0) { console.log('Text fallback: ' + textData.storeCount + ' stores'); return textData; }
-        console.error('All extraction methods failed');
-        const dbg = await this.page.evaluate(() => ({
-            url: window.location.href, title: document.title,
-            hasAngular: typeof angular !== 'undefined',
-            bodyLen: document.body.innerText.length,
-            preview: document.body.innerText.substring(0, 500),
-            hasAllMetrics: document.body.innerText.includes('ALL METRICS')
-        }));
-        console.log('Debug:', JSON.stringify(dbg, null, 2));
-        return { stores: {}, totals: { net_sales: 0 }, storeCount: 0 };
+
+        if (textData && textData.storeCount > 0) {
+            return textData;
+        }
+
+        const debugInfo = await this.getPageDiag();
+        this.logStep('extract', { msg: 'ALL EXTRACTION FAILED', ...debugInfo });
+        return { stores: {}, totals: { net_sales: 0 }, storeCount: 0, debug: debugInfo };
     }
 
     async scrapeForDate(targetDate = null) {
         const date = targetDate || format(subDays(new Date(), 1), 'yyyy-MM-dd');
         const results = [];
         const restaurants = Restaurant.getAll();
-        console.log('Scraping Aloha data for date: ' + date);
-        console.log('Found ' + restaurants.length + ' restaurants in database');
+        let currentStep = 'start';
+
+        this.logStep('start', { date, restaurantCount: restaurants.length });
+
         try {
+            currentStep = 'init';
             await this.init();
+
+            currentStep = 'login';
             await this.login();
+
+            currentStep = 'navigateToDashboard';
             await this.navigateToDashboard();
+
+            currentStep = 'enableAngularDebug';
             await this.enableAngularDebug();
+
+            currentStep = 'switchToYesterdayView';
             await this.switchToYesterdayView();
+
+            currentStep = 'extractDashboardData';
             const dashboardData = await this.extractDashboardData();
-            console.log('Extraction: ' + dashboardData.storeCount + ' stores, source: ' + dashboardData.source);
+
+            this.logStep('process', { storeCount: dashboardData.storeCount, source: dashboardData.source });
+
             if (dashboardData.storeCount === 0) {
-                console.error('No store data extracted');
-                for (const r of restaurants) { results.push({ restaurant: r.name, date, status: 'no_data', reason: 'extraction_failed' }); }
+                for (const r of restaurants) {
+                    results.push({ restaurant: r.name, date, status: 'no_data', reason: 'extraction_failed' });
+                }
                 this.logScrape('aloha', date, results);
-                return results;
+                return { results, steps: this.steps };
             }
+
             for (const restaurant of restaurants) {
                 let storeData = null;
+
+                // Try matching store names
                 for (const [alohaName, data] of Object.entries(dashboardData.stores)) {
-                    if (restaurant.name.toLowerCase().includes(alohaName.toLowerCase())) {
+                    const alohaLower = alohaName.toLowerCase();
+                    const restLower = restaurant.name.toLowerCase();
+                    if (restLower.includes(alohaLower) || alohaLower.includes(restLower.replace('la hacienda ranch ', ''))) {
                         storeData = data;
                         break;
                     }
                 }
-                console.log('Processing: ' + restaurant.name + ' -> ' + (storeData ? 'MATCHED' : 'NO MATCH'));
+
+                // Fuzzy match by last word
+                if (!storeData) {
+                    const nameWords = restaurant.name.toLowerCase().split(/\s+/);
+                    const keyWord = nameWords[nameWords.length - 1];
+                    for (const [alohaName, data] of Object.entries(dashboardData.stores)) {
+                        if (alohaName.toLowerCase().includes(keyWord)) {
+                            storeData = data;
+                            break;
+                        }
+                    }
+                }
+
                 if (storeData && storeData.net_sales > 0) {
                     DailySales.upsert({
-                        restaurant_id: restaurant.id, business_date: date,
-                        net_sales: storeData.net_sales, gross_sales: storeData.net_sales,
-                        guest_count: storeData.guest_count, check_count: storeData.check_count,
-                        avg_check: storeData.check_avg, avg_guest_spend: storeData.ppa,
-                        comps: storeData.comp_amount, voids: storeData.void_amount,
+                        restaurant_id: restaurant.id,
+                        business_date: date,
+                        net_sales: storeData.net_sales,
+                        gross_sales: storeData.net_sales,
+                        guest_count: storeData.guest_count,
+                        check_count: storeData.check_count,
+                        avg_check: storeData.check_avg,
+                        avg_guest_spend: storeData.ppa,
+                        comps: storeData.comp_amount,
+                        voids: storeData.void_amount,
                         data_source: 'aloha'
                     });
                     DailyLabor.upsert({
-                        restaurant_id: restaurant.id, business_date: date,
+                        restaurant_id: restaurant.id,
+                        business_date: date,
                         labor_percent: storeData.labor_percent,
                         total_labor_cost: storeData.labor_amount,
                         total_hours: storeData.labor_hours,
                         data_source: 'aloha'
                     });
-                    results.push({ restaurant: restaurant.name, date, status: 'success',
+                    results.push({
+                        restaurant: restaurant.name,
+                        date,
+                        status: 'success',
                         data: { net_sales: storeData.net_sales, labor_pct: storeData.labor_percent, guest_count: storeData.guest_count }
                     });
-                    console.log('  ' + restaurant.name + ': Sales $' + storeData.net_sales.toFixed(2) + ', Labor ' + storeData.labor_percent + '%');
+                    this.logStep('upsert', { restaurant: restaurant.name, net_sales: storeData.net_sales });
                 } else {
-                    results.push({ restaurant: restaurant.name, date, status: 'no_data', reason: storeData ? 'zero_sales' : 'no_match' });
+                    results.push({
+                        restaurant: restaurant.name,
+                        date,
+                        status: 'no_data',
+                        reason: storeData ? 'zero_sales' : 'no_match'
+                    });
                 }
             }
+
             this.logScrape('aloha', date, results);
         } catch (error) {
-            console.error('Scrape error:', error.message);
-            for (const r of restaurants) { results.push({ restaurant: r.name, date, status: 'error', error: error.message }); }
+            console.error('Scrape error at [' + currentStep + ']:', error.message);
+            console.error('Stack:', error.stack);
+            for (const r of restaurants) {
+                results.push({
+                    restaurant: r.name,
+                    date,
+                    status: 'error',
+                    error: '[' + currentStep + '] ' + error.message,
+                    step: currentStep
+                });
+            }
             try { this.logScrape('aloha', date, results); } catch (e) {}
         } finally {
             await this.close();
         }
-        return results;
+
+        return { results, steps: this.steps };
     }
 
     logScrape(type, date, results) {
-        const db = getDb();
-        const ok = results.filter(r => r.status === 'success').length;
-        const fail = results.filter(r => r.status !== 'success').length;
-        db.prepare('INSERT INTO scrape_log (scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)').run(type, date, fail > 0 ? 'partial' : 'success', ok, null);
+        try {
+            const db = getDb();
+            const ok = results.filter(r => r.status === 'success').length;
+            const fail = results.filter(r => r.status !== 'success').length;
+            db.prepare(
+                'INSERT INTO scrape_log (scrape_type, business_date, status, records_processed, error_message, completed_at, duration_seconds) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)'
+            ).run(type, date, fail > 0 ? 'partial' : 'success', ok, null);
+        } catch (e) {
+            console.error('Failed to log scrape:', e.message);
+        }
     }
 }
 
