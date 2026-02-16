@@ -110,9 +110,9 @@ export class DailyLabor {
                 ) as sales_per_labor_hour
             FROM restaurants r
             LEFT JOIN daily_labor dl ON r.id = dl.restaurant_id
-                AND dl.business_date BETWEEN ? AND ?
+                AND dl.business_date BETWEEN ? AND0?
             LEFT JOIN daily_sales ds ON r.id = ds.restaurant_id
-                AND ds.business_date BETWEEN ? AND ?
+                AND ds.business_date BETWEEN ? AND0?
             WHERE r.is_active = 1
             GROUP BY r.id
             ORDER BY labor_percent ASC
@@ -190,6 +190,57 @@ export class DailyLabor {
             hourly_labor_data: data.hourly_labor_data ? JSON.stringify(data.hourly_labor_data) : null,
             data_source: data.data_source || 'netchex'
         });
+    }
+
+    /**
+     * Get FOH/BOH labor breakdown by restaurant
+     */
+    static getFohBohByRestaurant(startDate, endDate) {
+        const db = getDb();
+        return db.prepare(`
+            SELECT
+                r.id as restaurant_id,
+                r.name as restaurant_name,
+                r.short_name,
+                COALESCE(SUM(dl.foh_hours), 0) as foh_hours,
+                COALESCE(SUM(dl.foh_cost), 0) as foh_cost,
+                COALESCE(SUM(dl.boh_hours), 0) as boh_hours,
+                COALESCE(SUM(dl.boh_cost), 0) as boh_cost,
+                COALESCE(SUM(dl.management_hours), 0) as mgmt_hours,
+                COALESCE(SUM(dl.management_cost), 0) as mgmt_cost,
+                COALESCE(SUM(dl.total_labor_cost), 0) as total_labor_cost,
+                COALESCE(SUM(dl.total_hours), 0) as total_hours,
+                COALESCE(SUM(ds.net_sales), 0) as net_sales
+            FROM restaurants r
+            LEFT JOIN daily_labor dl ON r.id = dl.restaurant_id
+                AND dl.business_date BETWEEN ? AND ?
+            LEFT JOIN daily_sales ds ON r.id = ds.restaurant_id
+                AND ds.business_date BETWEEN ? AND ?
+            WHERE r.is_active = 1
+            GROUP BY r.id
+            ORDER BY r.name
+        `).all(startDate, endDate, startDate, endDate);
+    }
+
+    /**
+     * Get consolidated FOH/BOH totals
+     */
+    static getFohBohTotals(startDate, endDate) {
+        const db = getDb();
+        return db.prepare(`
+            SELECT
+                COALESCE(SUM(dl.foh_hours), 0) as foh_hours,
+                COALESCE(SUM(dl.foh_cost), 0) as foh_cost,
+                COALESCE(SUM(dl.boh_hours), 0) as boh_hours,
+                COALESCE(SUM(dl.boh_cost), 0) as boh_cost,
+                COALESCE(SUM(dl.management_hours), 0) as mgmt_hours,
+                COALESCE(SUM(dl.management_cost), 0) as mgmt_cost,
+                COALESCE(SUM(dl.total_labor_cost), 0) as total_labor_cost
+            FROM daily_labor dl
+            JOIN restaurants r ON dl.restaurant_id = r.id
+            WHERE r.is_active = 1
+            AND dl.business_date BETWEEN ? AND ?
+        `).get(startDate, endDate);
     }
 
     /**
