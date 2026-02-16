@@ -23,34 +23,28 @@ const PORT = process.env.PORT || 3001;
 
 // Basic Authentication Middleware
 const basicAuth = (req, res, next) => {
-              // Skip auth for health check endpoint (needed for Railway healthchecks)
-              if (req.path === '/api/health') {
-                              return next();
-              }
-            
-            const authHeader = req.headers.authorization;
-            if (!authHeader || !authHeader.startsWith('Basic ')) {
-                            res.setHeader('WWW-Authenticate', 'Basic realm="Restaurant Dashboard"');
-                            return res.status(401).send('Authentication required');
-            }
-            const credentials = Buffer.from(authHeader.split(' ')[1], 'base64').toString();
-            const [username, password] = credentials.split(':');
-            if (username === process.env.AUTH_USERNAME && password === process.env.AUTH_PASSWORD) {
-                            next();
-            } else {
-                            res.setHeader('WWW-Authenticate', 'Basic realm="Restaurant Dashboard"');
-                            return res.status(401).send('Invalid credentials');
-            }
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Restaurant Dashboard"');
+    return res.status(401).send('Authentication required');
+  }
+  const credentials = Buffer.from(authHeader.split(' ')[1], 'base64').toString();
+  const [username, password] = credentials.split(':');
+  if (username === process.env.AUTH_USERNAME && password === process.env.AUTH_PASSWORD) {
+    return next();
+  }
+  res.setHeader('WWW-Authenticate', 'Basic realm="Restaurant Dashboard"');
+  return res.status(401).send('Invalid credentials');
 };
 
 // Apply auth to all routes in production
 if (process.env.NODE_ENV === 'production') {
-            app.use(basicAuth);
+  app.use(basicAuth);
 }
 
 // Middleware
 app.use(helmet({
-            contentSecurityPolicy: false
+  contentSecurityPolicy: false
 }));
 app.use(cors());
 app.use(morgan('dev'));
@@ -63,81 +57,101 @@ app.use('/api/import', importRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-            res.json({
-                            status: 'healthy',
-                            timestamp: new Date().toISOString(),
-                            uptime: process.uptime()
-            });
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
 });
 
 // Manual trigger for scrapers
 app.post('/api/scrape/trigger', async (req, res) => {
-            try {
-                            const { date } = req.body;
-                            console.log(`Manual scrape triggered for date: ${date || 'yesterday'}`);
-                            runAllScrapers(date).catch(err => {
-                                                console.error('Scraper error:', err);
-                            });
-                            res.json({
-                                                success: true,
-                                                message: 'Scrape job started',
-                                                date: date || 'yesterday'
-                            });
-            } catch (error) {
-                            res.status(500).json({ error: 'Failed to trigger scrape' });
-            }
+  try {
+    const { date } = req.body;
+    console.log(`Manual scrape triggered for date: ${date || 'yesterday'}`);
+    runAllScrapers(date).catch(err => {
+      console.error('Scraper error:', err);
+    });
+    res.json({
+      success: true,
+      message: 'Scrape job started',
+      date: date || 'yesterday'
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to trigger scrape' });
+  }
+});
+
+// Synchronous scrape test - waits for result
+app.post('/api/scrape/test', async (req, res) => {
+  try {
+    const { date } = req.body;
+    console.log(`Synchronous scrape test for date: ${date || 'yesterday'}`);
+    const result = await runAllScrapers(date);
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('Scrape test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+// Scrape status - check scrape_log table
+app.get('/api/scrape/status', async (req, res) => {
+  try {
+    const { getDb } = await import('./database/db.js');
+    const db = getDb();
+    const logs = db.exec("SELECT * FROM scrape_log ORDER BY created_at DESC LIMIT 10");
+    const restaurants = db.exec("SELECT id, restaurant_name, short_name FROM restaurants");
+    const salesCount = db.exec("SELECT COUNT(*) as cnt FROM daily_sales");
+    const laborCount = db.exec("SELECT COUNT(*) as cnt FROM daily_labor");
+    res.json({
+      scrape_logs: logs[0] || { columns: [], values: [] },
+      restaurants: restaurants[0] || { columns: [], values: [] },
+      sales_count: salesCount[0]?.values?.[0]?.[0] || 0,
+      labor_count: laborCount[0]?.values?.[0]?.[0] || 0
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-            app.use(express.static(path.join(__dirname, '../dist/frontend')));
+  app.use(express.static(path.join(__dirname, '../dist/frontend')));
 
-    app.get('*', (req, res) => {
-                    res.sendFile(path.join(__dirname, '../dist/frontend/index.html'));
-    });
-}
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-            console.error('Error:', err);
-            res.status(500).json({
-                            error: 'Internal server error',
-                            message: process.env.NODE_ENV === 'development' ? err.message : undefined
-            });
-});
-
-// Schedule automated 
-const SCRAPE_SCHEDULE = process.env.SCRAPE_SCHEDULE || '30 5 * * *';
-
-if (process.env.NODE_ENV === 'production' || process.env.ENABLE_SCRAPING === 'true') {
-            cron.schedule(SCRAPE_SCHEDULE, async () => {
-                            console.log('Scheduled scrape job starting...');
-                            try {
-                                                await runAllScrapers();
-                                                console.log('Scheduled scrape completed');
-                            } catch (error) {
-                                                console.error('Scheduled scrape failed:', error);
-                            }
-            });
-            console.log(`Scraper scheduled: ${SCRAPE_SCHEDULE}`);
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../dist/frontend/index.html'));
+  });
 }
 
 // Initialize database and start server
 async function startServer() {
-            try {
-                            console.log('Initializing database...');
-                            await initDb();
-                            console.log('Database initialized');
+  try {
+    await initDb();
+    console.log('Database initialized');
 
-                app.listen(PORT, () => {
-                                    console.log(`Server running on port ${PORT}`);
-                });
-            } catch (error) {
-                            console.error('Failed to start server:', error);
-                            process.exit(1);
-            }
+    // Schedule daily scrape at 5:30 AM UTC (11:30 PM CST)
+    cron.schedule('30 5 * * *', async () => {
+      console.log('Running scheduled scrape...');
+      try {
+        await runAllScrapers();
+      } catch (error) {
+        console.error('Scheduled scrape failed:', error);
+      }
+    });
+
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
 }
 
 startServer();
-
-export default app;
