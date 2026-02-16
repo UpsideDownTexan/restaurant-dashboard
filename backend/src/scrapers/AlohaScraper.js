@@ -405,6 +405,64 @@ export class AlohaScraper {
             this.logStep('grid_sample', angularData.sampleRow);
         }
 
+        // Explore Aloha for FOH/BOH labor data
+        try {
+            const laborExplore = await this.page.evaluate(() => {
+                const result = { links: [], sections: [], angularControllers: [] };
+                
+                // Find all navigation links on the page
+                document.querySelectorAll('a[href], [ng-click], [ui-sref]').forEach(el => {
+                    const href = el.getAttribute('href') || '';
+                    const ngClick = el.getAttribute('ng-click') || '';
+                    const uiSref = el.getAttribute('ui-sref') || '';
+                    const text = (el.textContent || '').trim().substring(0, 50);
+                    if (text && (href || ngClick || uiSref)) {
+                        result.links.push({ text, href: href.substring(0, 100), ngClick: ngClick.substring(0, 100), uiSref: uiSref.substring(0, 100) });
+                    }
+                });
+                
+                // Find all ng-controller elements
+                document.querySelectorAll('[ng-controller]').forEach(el => {
+                    result.angularControllers.push(el.getAttribute('ng-controller'));
+                });
+                
+                // Check for Sales & Labor section or tabs
+                const allText = document.body.innerText;
+                const laborIdx = allText.indexOf('Sales & Labor');
+                if (laborIdx !== -1) {
+                    result.sections.push({ name: 'Sales & Labor', preview: allText.substring(laborIdx, laborIdx + 300) });
+                }
+                
+                // Check the scope for any FOH/BOH related data
+                try {
+                    const gridEl = document.querySelector('[ng-controller*="MetricGridController"]');
+                    if (gridEl) {
+                        const scope = angular.element(gridEl).scope();
+                        const ctrl = scope.ctrl;
+                        // Check available metric categories
+                        if (ctrl.metricCategoryList) {
+                            result.metricCategories = ctrl.metricCategoryList.map(c => ({ id: c.id, name: c.name }));
+                        }
+                        if (ctrl.metricCategory) {
+                            result.currentCategory = { id: ctrl.metricCategory.id, name: ctrl.metricCategory.name };
+                        }
+                        // Check for labor breakdown data
+                        if (ctrl.laborData) result.hasLaborData = true;
+                        if (ctrl.fohData) result.hasFohData = true;
+                        if (ctrl.bohData) result.hasBohData = true;
+                        
+                        // List all ctrl properties
+                        result.ctrlKeys = Object.keys(ctrl).filter(k => !k.startsWith('$')).slice(0, 50);
+                    }
+                } catch(e) { result.scopeError = e.message; }
+                
+                return result;
+            });
+            this.logStep('labor_explore', laborExplore);
+        } catch(e) {
+            this.logStep('labor_explore_error', e.message);
+        }
+
         if (angularData && angularData.storeCount > 0) {
             return angularData;
         }
