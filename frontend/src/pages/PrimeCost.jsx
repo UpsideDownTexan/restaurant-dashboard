@@ -77,7 +77,7 @@ export default function PrimeCost() {
         <KPICard
           title="Labor"
           value={summary.labor_percent}
-          target={30}
+          target={20}
           format="percent"
           icon={Users}
           inverse={true}
