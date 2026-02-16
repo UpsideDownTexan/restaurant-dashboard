@@ -23,6 +23,11 @@ const PORT = process.env.PORT || 3001;
 
 // Basic Authentication Middleware
 const basicAuth = (req, res, next) => {
+  // Skip auth for health check endpoints (for Railway healthchecks)
+  if (req.path === '/api/health') {
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Basic ')) {
     res.setHeader('WWW-Authenticate', 'Basic realm="Restaurant Dashboard"');
@@ -64,58 +69,25 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Manual trigger for scrapers
+// Manual trigger for scrapers - SYNCHRONOUS for debugging
 app.post('/api/scrape/trigger', async (req, res) => {
   try {
     const { date } = req.body;
     console.log(`Manual scrape triggered for date: ${date || 'yesterday'}`);
-    runAllScrapers(date).catch(err => {
-      console.error('Scraper error:', err);
-    });
+    const result = await runAllScrapers(date);
     res.json({
       success: true,
-      message: 'Scrape job started',
-      date: date || 'yesterday'
+      message: 'Scrape completed',
+      date: date || 'yesterday',
+      result
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to trigger scrape' });
-  }
-});
-
-// Synchronous scrape test - waits for result
-app.post('/api/scrape/test', async (req, res) => {
-  try {
-    const { date } = req.body;
-    console.log(`Synchronous scrape test for date: ${date || 'yesterday'}`);
-    const result = await runAllScrapers(date);
-    res.json({ success: true, result });
-  } catch (error) {
-    console.error('Scrape test error:', error);
+    console.error('Scraper error:', error);
     res.status(500).json({
       success: false,
       error: error.message,
       stack: error.stack
     });
-  }
-});
-
-// Scrape status - check scrape_log table
-app.get('/api/scrape/status', async (req, res) => {
-  try {
-    const { getDb } = await import('./database/db.js');
-    const db = getDb();
-    const logs = db.exec("SELECT * FROM scrape_log ORDER BY created_at DESC LIMIT 10");
-    const restaurants = db.exec("SELECT id, restaurant_name, short_name FROM restaurants");
-    const salesCount = db.exec("SELECT COUNT(*) as cnt FROM daily_sales");
-    const laborCount = db.exec("SELECT COUNT(*) as cnt FROM daily_labor");
-    res.json({
-      scrape_logs: logs[0] || { columns: [], values: [] },
-      restaurants: restaurants[0] || { columns: [], values: [] },
-      sales_count: salesCount[0]?.values?.[0]?.[0] || 0,
-      labor_count: laborCount[0]?.values?.[0]?.[0] || 0
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
