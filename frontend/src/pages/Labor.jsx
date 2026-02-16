@@ -74,7 +74,7 @@ export default function Labor() {
         <KPICard
           title="Labor %"
           value={avgLaborPercent}
-          target={30}
+          target={20}
           format="percent"
           icon={Users}
           inverse={true}
@@ -139,7 +139,7 @@ export default function Labor() {
             <tbody>
               {daily.map((day, index) => {
                 const laborPercent = day.labor_percent || 0;
-                const isOver = laborPercent > 30;
+                const isOver = laborPercent > 20;
                 const isWarning = laborPercent > 27 && laborPercent <= 30;
                 const salesPerHour = day.labor_hours > 0 ? day.net_sales / day.labor_hours : 0;
 
@@ -199,7 +199,7 @@ export default function Labor() {
               <tbody>
                 {byRestaurant.map((r, index) => {
                   const laborPercent = r.labor_percent || 0;
-                  const isOver = laborPercent > 30;
+                  const isOver = laborPercent > 20;
 
                   return (
                     <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
